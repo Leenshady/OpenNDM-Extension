@@ -1,7 +1,0 @@
-.DS_Store
-.acl-recovery/
-.write-test
-.chrome-test*/
-node_modules/
-*.crx
-*.pem
