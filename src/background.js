@@ -63,6 +63,8 @@ const recentSent = new Map();
 const seenHeaderUrls = new Map();
 const waitingFetches = new Map();
 const mediaByTab = new Map();
+// 面板默认最小化，只有显式展开过的标签页才会记录在此 / Tabs that expanded the panel.
+const panelOpenTabs = new Set();
 const tabInfo = new Map();
 
 let settings = { ...DEFAULT_SETTINGS };
@@ -194,6 +196,7 @@ async function broadcastState() {
       ndm: state,
       blockedSites,
       siteBlocked,
+      panelOpen: panelOpenTabs.has(tab.id),
       pageUrl: tab.url || ''
     });
   }
@@ -1137,11 +1140,15 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   tabInfo.delete(tabId);
   mediaByTab.delete(tabId);
+  panelOpenTabs.delete(tabId);
 });
 
 chrome.webNavigation.onCommitted.addListener((details) => {
   if (details.frameId !== 0) return;
   clearMedia(details.tabId, false);
+  // 整页导航后回到默认最小化；SPA 路由切换保留展开状态。
+  // A full navigation starts minimised again; SPA route changes keep the expanded panel.
+  panelOpenTabs.delete(details.tabId);
   tabInfo.set(details.tabId, {
     ...(tabInfo.get(details.tabId) || {}),
     url: details.url
@@ -1232,6 +1239,7 @@ async function handleMessage(message, sender) {
         recent: recentCaptures.slice(0, LIMITS.recentCaptures),
         media: tab?.id >= 0 ? [...(mediaByTab.get(tab.id)?.values() || [])] : [],
         siteBlocked: isHostBlocked(hostnameOf(pageUrl), blockedSites),
+        panelOpen: Number.isInteger(tab?.id) && tab.id >= 0 ? panelOpenTabs.has(tab.id) : false,
         siteSupported: /^https?:\/\//i.test(pageUrl),
         host: hostnameOf(pageUrl),
         pageUrl,
@@ -1241,13 +1249,27 @@ async function handleMessage(message, sender) {
     }
 
     case MSG.SET_SETTINGS: {
+      const wasPanelEnabled = settings.showMediaPanel;
       const next = await saveSettings(message.patch || {});
       settings = next;
+      // 面板开关变化后回到默认最小化 / Reset to minimised when the panel setting changes.
+      if (wasPanelEnabled !== settings.showMediaPanel) panelOpenTabs.clear();
       ndm.setPort(settings.ndmPort);
       updateBadge();
       updateMenuForActiveTab();
       scheduleBroadcast();
       return { ok: true, settings };
+    }
+
+    case MSG.PANEL_STATE: {
+      const tabId = Number.isInteger(message.tabId) && message.tabId >= 0
+        ? message.tabId
+        : sender.tab?.id;
+      if (!Number.isInteger(tabId) || tabId < 0) return { ok: false, error: 'no-tab' };
+      if (message.open) panelOpenTabs.add(tabId);
+      else panelOpenTabs.delete(tabId);
+      scheduleBroadcast();
+      return { ok: true, open: Boolean(message.open) };
     }
 
     case MSG.SET_SITE_BLOCKED: {

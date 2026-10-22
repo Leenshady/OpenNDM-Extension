@@ -21,6 +21,8 @@
   "mediaPanelTitle": { "message": "Page media" },
   "mediaPanelSubtitle": { "message": "Download with Neat Download Manager" },
   "close": { "message": "Close" },
+  "mediaPanelOpen": { "message": "Expand media panel" },
+  "minimize": { "message": "Minimize" },
   "mediaFile": { "message": "Media file" },
   "downloadWithNdm": { "message": "Download with NDM" },
   "sentToNdm": { "message": "Sent to NDM" },
@@ -54,9 +56,9 @@
   "popupAllowed": { "message": "Allowed" },
   "popupSiteError": { "message": "Could not update the blocklist." },
   "popupSiteUnavailable": { "message": "Not available on this page" },
-  "popupMediaPanel": { "message": "Media panel" },
+  "popupMediaPanel": { "message": "Expand media panel" },
   "popupMediaPanelDesc": {
-    "message": "Show downloadable video and audio on the page."
+    "message": "Applies to this page; a compact pill stays when minimised."
   },
   "popupRecent": { "message": "Recent captures" },
   "popupNoRecent": { "message": "No captures yet." },

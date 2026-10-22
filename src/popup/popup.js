@@ -16,7 +16,8 @@
     SET_SETTINGS: 'SET_SETTINGS',
     SET_SITE_BLOCKED: 'SET_SITE_BLOCKED',
     TEST_CONNECTION: 'TEST_CONNECTION',
-    CLEAR_RECENT: 'CLEAR_RECENT'
+    CLEAR_RECENT: 'CLEAR_RECENT',
+    PANEL_STATE: 'PANEL_STATE'
   };
 
   const state = {
@@ -26,6 +27,8 @@
     recent: [],
     siteBlocked: false,
     siteSupported: false,
+    panelOpen: false,
+    tab: null,
     host: '',
     version: ''
   };
@@ -73,7 +76,8 @@
     const connected = Boolean(ndm.connected);
 
     $('captureToggle').checked = Boolean(settings.captureEnabled);
-    $('mediaToggle').checked = Boolean(settings.showMediaPanel);
+    // 与页面上的面板互锁：最小化后这里显示为关闭 / Mirrors the in-page panel state.
+    $('mediaToggle').checked = Boolean(settings.showMediaPanel) && state.panelOpen;
     $('siteToggle').checked = Boolean(state.siteBlocked);
     $('siteToggle').disabled = !state.siteSupported;
 
@@ -208,11 +212,33 @@
 
   $('mediaToggle').addEventListener('change', async (event) => {
     const checked = event.target.checked;
-    const response = await send({ type: MSG.SET_SETTINGS, patch: { showMediaPanel: checked } });
+
+    if (checked) {
+      // 展开：必要时重新启用功能，再在当前标签页展开面板。
+      // Expand: re-enable the feature when needed, then expand the panel on this tab.
+      if (!state.settings.showMediaPanel) {
+        const response = await send({ type: MSG.SET_SETTINGS, patch: { showMediaPanel: true } });
+        if (!response?.ok) {
+          event.target.checked = false;
+          render();
+          return;
+        }
+        state.settings = response.settings;
+      }
+      const response = await send({ type: MSG.PANEL_STATE, tabId: state.tab?.id, open: true });
+      if (response?.ok) state.panelOpen = true;
+      else event.target.checked = false;
+      render();
+      return;
+    }
+
+    // 最小化：只收起当前页面的面板，功能开关仍留在设置页。
+    // Minimize: collapse this page only; the feature switch lives in Settings.
+    const response = await send({ type: MSG.PANEL_STATE, tabId: state.tab?.id, open: false });
     if (response?.ok) {
-      state.settings = response.settings;
+      state.panelOpen = false;
     } else {
-      event.target.checked = !checked;
+      event.target.checked = true;
     }
     render();
   });

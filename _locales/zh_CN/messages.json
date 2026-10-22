@@ -21,6 +21,8 @@
   "mediaPanelTitle": { "message": "页面媒体" },
   "mediaPanelSubtitle": { "message": "使用 Neat Download Manager 下载" },
   "close": { "message": "关闭" },
+  "mediaPanelOpen": { "message": "展开媒体面板" },
+  "minimize": { "message": "最小化" },
   "mediaFile": { "message": "媒体文件" },
   "downloadWithNdm": { "message": "使用 NDM 下载" },
   "sentToNdm": { "message": "已发送到 NDM" },
@@ -54,9 +56,9 @@
   "popupAllowed": { "message": "未屏蔽" },
   "popupSiteError": { "message": "更新屏蔽列表失败。" },
   "popupSiteUnavailable": { "message": "此页面不可用" },
-  "popupMediaPanel": { "message": "媒体面板" },
+  "popupMediaPanel": { "message": "展开媒体面板" },
   "popupMediaPanelDesc": {
-    "message": "在页面上显示可下载的视频和音频。"
+    "message": "仅作用于当前页面；最小化后保留小胶囊入口。"
   },
   "popupRecent": { "message": "最近捕获" },
   "popupNoRecent": { "message": "暂无捕获记录。" },

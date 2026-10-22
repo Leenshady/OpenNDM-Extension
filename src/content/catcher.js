@@ -21,6 +21,7 @@
     STATE_CHANGED: 'STATE_CHANGED',
     MEDIA_ADD: 'MEDIA_ADD',
     MEDIA_CLEAR: 'MEDIA_CLEAR',
+    PANEL_STATE: 'PANEL_STATE',
     SHOW_TOAST: 'SHOW_TOAST'
   };
 
@@ -52,7 +53,10 @@
   let panelCount = null;
   let panelFooter = null;
   let panelHost = null;
-  let dismissed = false;
+  let panelLauncher = null;
+  let launcherCount = null;
+  // 默认最小化：只在右下角显示胶囊入口 / Minimised by default: only the pill shows.
+  let collapsed = true;
   let scanTimer = null;
   let stateReady = false;
   let bilibiliParsed = false;
@@ -205,7 +209,6 @@
     if (!bilibiliParsed) scanBilibiliPlayInfo(add);
 
     if (found.length) {
-      dismissed = false;
       renderPanel();
       void sendMessage({
         type: MSG.MEDIA_FOUND,
@@ -419,6 +422,25 @@
         .dot { width: 7px; height: 7px; border-radius: 50%; background: #1e8e3e; flex: none; }
         .dot.off { background: #f9ab00; }
         .dot.blocked { background: #d93025; }
+        .launcher {
+          display: none;
+          align-items: center;
+          gap: 7px;
+          height: 40px;
+          padding: 0 9px 0 13px;
+          border: 1px solid #dadce0;
+          border-radius: 20px;
+          background: #ffffff;
+          color: #1e8e3e;
+          cursor: pointer;
+          box-shadow: 0 10px 26px rgba(32, 33, 36, .24), 0 2px 6px rgba(32, 33, 36, .12);
+          font: 600 12.5px/1 "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+          animation: ndm-in .18s ease-out;
+        }
+        .launcher:hover { background: #f8f9fa; }
+        .launcher:focus-visible { outline: 2px solid #1a73e8; outline-offset: 2px; }
+        .launcher svg { width: 17px; height: 17px; fill: currentColor; flex: none; }
+        .launcher-count { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; background: #e6f4ea; color: #137333; font-size: 11px; display: grid; place-items: center; box-sizing: border-box; }
         @media (prefers-color-scheme: dark) {
           .panel { color: #e8eaed; background: #292a2d; border-color: #3c4043; box-shadow: 0 14px 40px rgba(0,0,0,.55); }
           .head, .foot { border-color: #3c4043; }
@@ -428,6 +450,9 @@
           .count { background: #1a3a63; color: #8ab4f8; }
           .thumb { background: #1a3a63; color: #8ab4f8; }
           .thumb.audio { background: #173a28; color: #81c995; }
+          .launcher { background: #292a2d; border-color: #3c4043; color: #81c995; box-shadow: 0 12px 32px rgba(0, 0, 0, .55); }
+          .launcher:hover { background: #3c4043; }
+          .launcher-count { background: #173a28; color: #81c995; }
         }
       </style>
       <section class="panel" role="dialog" aria-label="${escapeHtml(t('mediaPanelTitle', 'Page media'))}">
@@ -440,13 +465,17 @@
             <span class="sub">${escapeHtml(t('mediaPanelSubtitle', 'Download with Neat Download Manager'))}</span>
           </div>
           <span class="count">0</span>
-          <button class="icon-btn close" type="button" title="${escapeHtml(t('close', 'Close'))}" aria-label="${escapeHtml(t('close', 'Close'))}">
-            <svg viewBox="0 0 24 24"><path d="M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12 19 17.6 17.6 19 12 13.4 6.4 19 5 17.6 10.6 12 5 6.4 6.4 5z"/></svg>
+          <button class="icon-btn minimize" type="button" title="${escapeHtml(t('minimize', 'Minimize'))}" aria-label="${escapeHtml(t('minimize', 'Minimize'))}">
+            <svg viewBox="0 0 24 24"><path d="M12 15.6 6.4 10l1.4-1.4L12 12.8l4.2-4.2L17.6 10z"/></svg>
           </button>
         </header>
         <div class="list" role="list"></div>
         <footer class="foot"><span class="dot"></span><span class="status"></span></footer>
       </section>
+      <button class="launcher" type="button" title="${escapeHtml(t('mediaPanelOpen', 'Show media panel'))}" aria-label="${escapeHtml(t('mediaPanelOpen', 'Show media panel'))}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10.2l3.6-3.6 1.4 1.4-6 6-6-6 1.4-1.4L10 13.2V3h2zm-8 16h16v2H4v-2z"/></svg>
+        <span class="launcher-count">0</span>
+      </button>
     `;
     adoptShadowStyles(shadow);
     (document.body || document.documentElement).appendChild(panelHost);
@@ -454,29 +483,50 @@
     panelList = shadow.querySelector('.list');
     panelCount = shadow.querySelector('.count');
     panelFooter = shadow.querySelector('.status');
-    shadow.querySelector('.close').addEventListener('click', () => {
-      dismissed = true;
-      renderPanel();
+    panelLauncher = shadow.querySelector('.launcher');
+    launcherCount = shadow.querySelector('.launcher-count');
+    shadow.querySelector('.minimize').addEventListener('click', () => {
+      setPanelCollapsed(true);
     });
+    // 最小化后通过胶囊按钮重新展开 / Expand the panel again from the collapsed launcher.
+    panelLauncher?.addEventListener('click', () => {
+      setPanelCollapsed(false);
+    });
+  }
+
+  // 收起状态交给后台保存，使 popup 的开关与面板互锁。
+  // Persist the collapsed state in the worker so the popup switch stays in sync.
+  function setPanelCollapsed(value) {
+    collapsed = Boolean(value);
+    renderPanel();
+    void sendMessage({ type: MSG.PANEL_STATE, open: !collapsed });
   }
 
   function renderPanel() {
     if (!isTop) return;
-    const visible = Boolean(
+    const hasMedia = Boolean(
       stateReady
       && media.size
       && state.settings.captureEnabled
       && state.settings.showMediaPanel
       && !state.siteBlocked
-      && !dismissed
     );
-    if (!visible) {
+    if (!hasMedia) {
       if (panelHost) panelHost.style.display = 'none';
       return;
     }
     ensurePanel();
     if (!panelHost || !panelList) return;
     panelHost.style.display = 'block';
+
+    // 最小化后只保留一个胶囊入口，避免面板无法再次打开。
+    // Keep a compact launcher when minimised so the panel can always be reopened.
+    if (panel) panel.style.display = collapsed ? 'none' : 'flex';
+    if (panelLauncher) {
+      panelLauncher.style.display = collapsed ? 'inline-flex' : 'none';
+      if (launcherCount) launcherCount.textContent = String(media.size);
+    }
+    if (collapsed) return;
 
     const items = [...media.values()].slice(-30).reverse();
     panelCount.textContent = String(items.length);
@@ -655,7 +705,6 @@
       }
     }
     if (added) {
-      dismissed = false;
       renderPanel();
     }
     return added;
@@ -669,6 +718,9 @@
     if (payload.settings) Object.assign(state.settings, payload.settings);
     if (payload.ndm) state.ndm = payload.ndm;
     if (typeof payload.siteBlocked === 'boolean') state.siteBlocked = payload.siteBlocked;
+    // 面板展开状态以后台为准，popup 开关与页面按钮因此保持一致。
+    // The worker owns the panel state, keeping the popup switch and the in-page controls in sync.
+    if (typeof payload.panelOpen === 'boolean') collapsed = !payload.panelOpen;
     const changed = before !== stateKey();
     if (Array.isArray(payload.media) && payload.media.length) {
       mergeMediaItems(payload.media);

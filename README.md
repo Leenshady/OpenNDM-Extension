@@ -55,7 +55,7 @@ All downloads from that host and its subdomains then use the browser. Unblock fr
 
 ### Page media
 
-When a page contains direct video or audio, a small panel appears at the bottom-right. It lists the discovered media and sends your selection to NDM. Disable it in the popup or in **Settings → Capture → Page media panel**.
+When a page contains direct video or audio, a minimised pill appears at the bottom-right by default; click it to expand the panel that lists the discovered media. Use the minimise button (⌄) in the header to collapse it again. The popup's **Expand media panel** switch is interlocked with that state — it shows off while minimised and expands the current page when turned on. Use **Settings → Capture → Page media panel** to disable the feature entirely.
 
 The panel is intentionally conservative: encrypted/DRM streams, `blob:` URLs, `data:` URLs, and MSE-only streams cannot be downloaded by NDM and are not listed.
 

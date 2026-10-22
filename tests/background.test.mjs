@@ -173,6 +173,28 @@ test('blocklist toggles current site and removes parent rules', async () => {
   assert.equal(state.siteBlocked, false);
 });
 
+test('panel is minimised by default and expanded per tab', async () => {
+  let state = await sendMessage({ type: 'GET_STATE', tabId: activeTab.id });
+  assert.equal(state.panelOpen, false);
+
+  const opened = await sendMessage({ type: 'PANEL_STATE', open: true }, { tab: activeTab });
+  assert.equal(opened.ok, true);
+  state = await sendMessage({ type: 'GET_STATE', tabId: activeTab.id });
+  assert.equal(state.panelOpen, true);
+
+  const minimised = await sendMessage({ type: 'PANEL_STATE', open: false }, { tab: activeTab });
+  assert.equal(minimised.ok, true);
+  state = await sendMessage({ type: 'GET_STATE', tabId: activeTab.id });
+  assert.equal(state.panelOpen, false);
+
+  // 面板设置变化后回到默认最小化。
+  await sendMessage({ type: 'PANEL_STATE', open: true }, { tab: activeTab });
+  await sendMessage({ type: 'SET_SETTINGS', patch: { showMediaPanel: false } });
+  state = await sendMessage({ type: 'GET_STATE', tabId: activeTab.id });
+  assert.equal(state.panelOpen, false);
+  await sendMessage({ type: 'SET_SETTINGS', patch: { showMediaPanel: true } });
+});
+
 test('rejects invalid explicit download URLs and accepts bypass', async () => {
   const download = await sendMessage({ type: 'DOWNLOAD_URL', url: 'blob:https://example.com/id' });
   assert.equal(download.ok, false);
