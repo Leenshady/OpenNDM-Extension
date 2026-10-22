@@ -77,6 +77,10 @@ export function decideCapture(input = {}) {
     return deny('status');
   }
 
+  // 网易邮箱附件链接带有一次性下载票据，浏览器请求后 NDM 重发只会拿到 416。
+  // NetEase webmail attachments carry a one-time ticket: NDM's replay only gets a 416.
+  if (isNetEaseAttachmentUrl(input.url)) return deny('one-time-attachment');
+
   const contentType = normalizeMime(input.contentType);
   const contentDisposition = String(input.contentDisposition || '');
   const parsedDisposition = parseContentDisposition(contentDisposition);
@@ -185,6 +189,21 @@ function isPreviewAssetUrl(value) {
   try {
     const path = new URL(value).pathname;
     return /(?:^|\/)(?:videoshot[a-z0-9]*|videopreview)(?:[\/_.-]|$)/i.test(path);
+  } catch {
+    return false;
+  }
+}
+
+// 网易邮箱（126 / 163 / yeah.net）附件下载地址。
+// NetEase webmail attachment endpoint (126 / 163 / yeah.net).
+const NETEASE_MAIL_HOSTS = /(?:^|\.)(?:mail\.(?:126|163)\.com|mail\.yeah\.net)$/i;
+
+export function isNetEaseAttachmentUrl(value) {
+  try {
+    const url = new URL(value);
+    if (!NETEASE_MAIL_HOSTS.test(url.hostname)) return false;
+    if (!/\/js6\/read\/readdata\.jsp$/i.test(url.pathname)) return false;
+    return /(?:^|[?&])action=download_attach(?:&|$)/i.test(url.search);
   } catch {
     return false;
   }

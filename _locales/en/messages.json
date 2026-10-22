@@ -17,6 +17,7 @@
   "siteBlockedToast": { "message": "NDM disabled for this site" },
   "siteUnblockedToast": { "message": "NDM enabled for this site" },
   "bypassToast": { "message": "NDM skipped · browser download" },
+  "mailAttachmentBrowser": { "message": "Mail attachment links do not work with NDM; use the browser instead." },
 
   "mediaPanelTitle": { "message": "Page media" },
   "mediaPanelSubtitle": { "message": "Download with Neat Download Manager" },

@@ -20,7 +20,7 @@ import {
   NON_DOWNLOAD_MIMES,
   REQUEST_TYPES
 } from './lib/constants.js';
-import { decideCapture } from './lib/rules.js';
+import { decideCapture, isNetEaseAttachmentUrl } from './lib/rules.js';
 import {
   isHostBlocked,
   isRequestBlocked,
@@ -65,6 +65,8 @@ const waitingFetches = new Map();
 const mediaByTab = new Map();
 // 面板默认最小化，只有显式展开过的标签页才会记录在此 / Tabs that expanded the panel.
 const panelOpenTabs = new Set();
+// 一次性邮件附件提示的去重记录 / Dedupe map for one-time attachment notices.
+const oneTimeNotices = new Map();
 const tabInfo = new Map();
 
 let settings = { ...DEFAULT_SETTINGS };
@@ -344,6 +346,18 @@ async function manualDownload(options) {
       });
     }
     return { ok: false, error: 'site-blocked' };
+  }
+
+  // 网易邮箱附件链接无法被 NDM 重放，提示改用浏览器。
+  // NetEase attachment links cannot be replayed by NDM; ask for a browser download.
+  if (isNetEaseAttachmentUrl(url)) {
+    if (options.tabId >= 0) {
+      void sendTabMessage(options.tabId, {
+        type: MSG.SHOW_TOAST,
+        text: t('mailAttachmentBrowser', 'This mail attachment link cannot be used by NDM; the browser will download it.')
+      }, { frameId: 0 });
+    }
+    return { ok: false, error: 'one-time-attachment' };
   }
 
   const contentType = normalizeMime(options.contentType || '');
@@ -793,7 +807,19 @@ async function processHeaders(snapshot) {
       bypass: false
     });
 
-    if (!decision.capture) return;
+    if (!decision.capture) {
+      // 一次性邮件附件交给浏览器下载，并提示一次。
+      // One-time mail attachments stay in the browser; explain it once.
+      if (decision.reason === 'one-time-attachment'
+        && snapshot.tabId >= 0
+        && markOneTimeNotice(snapshot.url)) {
+        void sendTabMessage(snapshot.tabId, {
+          type: MSG.SHOW_TOAST,
+          text: t('mailAttachmentBrowser', 'This mail attachment link cannot be used by NDM; the browser will download it.')
+        }, { frameId: 0 });
+      }
+      return;
+    }
 
     // 网络媒体同时放入页面媒体面板，解决 blob/MSE 页面没有 <video src> 的问题。
     // Also add network media to the panel for blob/MSE pages without a direct <video src>.
@@ -890,6 +916,17 @@ function isRecentlySent(url) {
     recentSent.delete(url);
     return false;
   }
+  return true;
+}
+
+// 同一附件只提示一次，避免重复请求刷屏。
+// Show the one-time attachment notice once per URL.
+function markOneTimeNotice(url) {
+  const now = Date.now();
+  const until = oneTimeNotices.get(url) || 0;
+  if (until > now) return false;
+  oneTimeNotices.set(url, now + 20_000);
+  pruneExpiring(oneTimeNotices, 60);
   return true;
 }
 

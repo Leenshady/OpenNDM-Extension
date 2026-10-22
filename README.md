@@ -59,6 +59,8 @@ When a page contains direct video or audio, a minimised pill appears at the bott
 
 The panel is intentionally conservative: encrypted/DRM streams, `blob:` URLs, `data:` URLs, and MSE-only streams cannot be downloaded by NDM and are not listed.
 
+NetEase webmail (126 / 163 / yeah.net) attachment URLs carry a one-time ticket: after the browser has requested one, NDM's replay only receives a `416` or an HTML error page, so the file ends up saved as `readdata.jsp`. The extension therefore leaves those links to the browser and shows a one-off notice on the page.
+
 ## Supported file types
 
 Compatible with the reference NDM add-on, grouped for clarity:

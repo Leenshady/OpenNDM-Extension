@@ -207,6 +207,29 @@ test('rejects partial responses, blocked sites, bypass, and disabled capture', (
   assert.equal(decideCapture({ ...base, url: 'https://example.com/file.zip', contentType: 'application/zip', ndmConnected: false }).capture, false);
 });
 
+test('leaves one-time NetEase webmail attachments to the browser', () => {
+  const url = 'https://mail.126.com/js6/read/readdata.jsp?sid=x&mid=420:abc&part=3&mode=download&l=read&action=download_attach';
+  const result = decideCapture({
+    ...base,
+    type: 'main_frame',
+    url,
+    contentType: 'application/pdf',
+    contentDisposition: 'attachment; filename="=?UTF8?B?5rWL6K+V?="',
+    contentLength: 20000
+  });
+  assert.equal(result.capture, false);
+  assert.equal(result.reason, 'one-time-attachment');
+
+  const preview = decideCapture({
+    ...base,
+    type: 'main_frame',
+    url: 'https://preview.mail.126.com/download.do?uid=a&mid=b&part=3&filename=report.pdf',
+    contentType: 'application/pdf',
+    contentLength: 20000
+  });
+  assert.equal(preview.capture, true);
+});
+
 test('does not flood NDM with TS segments', () => {
   const result = decideCapture({
     ...base,
@@ -259,6 +282,8 @@ test('builds a protocol-compatible NDM message', () => {
   assert.match(message, /\r\n7:8388608\r\n/);
   assert.match(message, /\r\nX-Token: ok\r\n/);
   assert.doesNotMatch(message, /User-Agent/);
+  // NDM 会把该响应头当作请求头回传 / NDM echoes this response header into the request.
+  assert.doesNotMatch(message, /Content-Disposition:/i);
 });
 
 test('serializes URL-encoded and multipart POST bodies', () => {

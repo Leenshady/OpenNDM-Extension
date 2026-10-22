@@ -37,9 +37,8 @@ export function buildNdmMessage(payload = {}) {
   if (payload.requestContentType) {
     lines.push(`Content-Type: ${sanitizeHeaderValue(payload.requestContentType)}`);
   }
-  if (payload.contentDisposition) {
-    lines.push(`Content-Disposition: ${sanitizeHeaderValue(payload.contentDisposition)}`);
-  }
+  // 不要回传响应的 Content-Disposition：NDM 会把它当作请求头发给服务器。
+  // Never echo the response Content-Disposition: NDM sends it as a request header.
   if (payload.description) lines.push(`9:${sanitizeHeaderValue(payload.description)}`);
 
   const extraHeaders = payload.headers && typeof payload.headers === 'object' ? payload.headers : {};
