@@ -32,7 +32,7 @@ A clean **Manifest V3** rewrite of the Neat Download Manager browser extension. 
 5. Pin **OpenNDM-Extension** to the toolbar.
 6. Start NDM, open the popup, and click **Test** if the status is not connected.
 
-> Chrome’s “Load unpacked” mode is for development and personal use. To publish, package the folder as a ZIP and submit it to the Chrome Web Store under the GPL terms.
+> Chrome’s “Load unpacked” mode is for development and personal use. To publish, run `npm run package` to build `dist/openndm-extension-v0.1.zip` and submit it to the Chrome Web Store under the GPL terms.
 
 ## Usage
 
@@ -112,10 +112,13 @@ If NDM is not running, capture is skipped and downloads stay in Chrome. This is 
 
 ```bash
 npm run check   # manifest, resource, and i18n validation
-npm test        # capture-rule and NDM message tests
+npm test        # capture rules, NDM messages, and packaging tests
+npm run package # validate, then build dist/openndm-extension-v<version>.zip
 ```
 
 No build step is required. Load the folder directly in Chrome.
+
+The release archive holds runtime files only. The script starts at `manifest.json` and follows HTML `<link>`/`<script>`/`<img>`, CSS `url()`, and ES module `import` references, then adds every locale and `LICENSE`; tests, scripts, and READMEs stay out. Use `node scripts/package.mjs --dry-run` to preview the file list or `--out <file.zip>` to change the destination. Timestamps are fixed, so identical sources produce an identical archive.
 
 ### Project layout
 

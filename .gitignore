@@ -3,5 +3,7 @@
 .write-test
 .chrome-test*/
 node_modules/
+dist/
+docs/
 *.crx
 *.pem
