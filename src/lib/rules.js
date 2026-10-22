@@ -130,9 +130,17 @@ export function decideCapture(input = {}) {
     return allow('hls', 'hls-playlist');
   }
 
-  // 明确的附件无条件接管 / Explicit attachments always win.
+  // 明确的附件接管；但浏览器类 MIME（JSON/XML/JS 等）只有顶层导航才是用户要的文件。
+  // Explicit attachments win, except browser-native MIMEs outside a top-level navigation
+  // (Office Online's AppPrefetchResources.ashx and similar internal APIs answer XHR with "attachment").
   if (attachment) {
     if (isMedia && input.captureMedia === false) return deny('media-disabled');
+    if (NON_DOWNLOAD_MIMES.has(contentType) && type !== 'main_frame') return deny('internal-api');
+    // fetch/XHR 的附件通常被页面转成 blob 再下载，真实文件名只存在于 DOM；
+    // NDM 只能按服务器 CD / URL 命名，交给浏览器才能保留文件名，也避免下载两份。
+    // XHR attachments are usually re-wrapped as blob downloads; only the browser knows the
+    // display name, so leave them alone instead of producing a wrongly named duplicate.
+    if (!isMedia && type === 'xmlhttprequest') return deny('js-blob-download');
     result.kind = isMedia ? 'media' : 'normal';
     return allow(result.kind, 'content-disposition');
   }

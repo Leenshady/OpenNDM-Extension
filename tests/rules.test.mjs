@@ -102,9 +102,10 @@ test('does not capture images, JSON, scripts, or styles', () => {
   }
 });
 
-test('captures an image only as an explicit attachment', () => {
+test('captures an image only as an explicit navigational attachment', () => {
   const result = decideCapture({
     ...base,
+    type: 'main_frame',
     url: 'https://example.com/photo',
     contentType: 'image/jpeg',
     contentDisposition: 'attachment; filename="photo.jpg"',
@@ -148,12 +149,51 @@ test('does not auto-capture ambiguous .bin files', () => {
 test('captures .bin only with an attachment header or manual action', () => {
   const result = decideCapture({
     ...base,
+    type: 'main_frame',
     url: 'https://example.com/payload.bin',
     contentType: 'application/octet-stream',
     contentDisposition: 'attachment; filename="firmware.bin"',
     contentLength: 5 * 1024 * 1024
   });
   assert.equal(result.capture, true);
+});
+
+test('leaves JS blob downloads to the browser', () => {
+  // 后端返回 octet-stream + 存储名，页面再用 a.download 转成 blob 下载。
+  // The API answers octet-stream with the storage name; the page re-wraps it as a blob download.
+  const xhr = decideCapture({
+    ...base,
+    type: 'xmlhttprequest',
+    url: 'http://10.18.58.1:8021/admin/api/attachment/downloadDatasourceByUploadPath/governTaskDetails?dataId=1&filename=aae96db617304ab48b0fc388dd1447fd.docx',
+    contentType: 'application/octet-stream;charset=UTF-8',
+    contentDisposition: 'attachment;filename=aae96db617304ab48b0fc388dd1447fd.docx',
+    contentLength: 110294
+  });
+  assert.equal(xhr.capture, false);
+  assert.equal(xhr.reason, 'js-blob-download');
+
+  // 同样的响应若是导航式下载，仍然接管 / The same response is captured when navigated to.
+  const navigation = decideCapture({
+    ...base,
+    type: 'main_frame',
+    url: 'http://10.18.58.1:8021/admin/api/attachment/downloadDatasourceByUploadPath/governTaskDetails?dataId=1&filename=aae96db617304ab48b0fc388dd1447fd.docx',
+    contentType: 'application/octet-stream;charset=UTF-8',
+    contentDisposition: 'attachment;filename=aae96db617304ab48b0fc388dd1447fd.docx',
+    contentLength: 110294
+  });
+  assert.equal(navigation.capture, true);
+
+  // 媒体 XHR 仍要进媒体面板 / Media XHR responses must still reach the media panel.
+  const media = decideCapture({
+    ...base,
+    type: 'xmlhttprequest',
+    url: 'https://cdn.example.com/movie.mp4',
+    contentType: 'video/mp4',
+    contentDisposition: 'attachment; filename="movie.mp4"',
+    contentLength: 8 * 1024 * 1024
+  });
+  assert.equal(media.capture, true);
+  assert.equal(media.kind, 'media');
 });
 
 test('keeps normal Bilibili video downloads working', () => {
@@ -228,6 +268,56 @@ test('leaves one-time NetEase webmail attachments to the browser', () => {
     contentLength: 20000
   });
   assert.equal(preview.capture, true);
+});
+
+test('ignores attachment responses from browser-native internal APIs', () => {
+  // Office Online 的预取接口：XHR POST + application/json + Content-Disposition: attachment（无文件名）。
+  // Office Online prefetch API: XHR POST, JSON, and a nameless "attachment" disposition.
+  const office = decideCapture({
+    ...base,
+    method: 'POST',
+    type: 'xmlhttprequest',
+    url: 'https://psg4-excel.officeapps.live.com/afhs/AppPrefetchResources.ashx',
+    contentType: 'application/json; charset=utf-8',
+    contentDisposition: 'attachment',
+    contentLength: 25841
+  });
+  assert.equal(office.capture, false);
+  assert.equal(office.reason, 'internal-api');
+
+  // 即使自报文件名，XHR 也不是导航式下载 / A named XHR response is still not a navigational download.
+  const namedXhr = decideCapture({
+    ...base,
+    type: 'xmlhttprequest',
+    url: 'https://example.com/api/export',
+    contentType: 'application/json',
+    contentDisposition: 'attachment; filename="report.json"',
+    contentLength: 4096
+  });
+  assert.equal(namedXhr.capture, false);
+  assert.equal(namedXhr.reason, 'internal-api');
+
+  // 顶层导航式的下载仍然接管 / Top-level navigational downloads are still captured.
+  const namedNavigation = decideCapture({
+    ...base,
+    type: 'main_frame',
+    url: 'https://example.com/api/export',
+    contentType: 'application/json',
+    contentDisposition: 'attachment; filename="report.json"',
+    contentLength: 4096
+  });
+  assert.equal(namedNavigation.capture, true);
+  assert.equal(namedNavigation.reason, 'content-disposition');
+
+  const unnamedNavigation = decideCapture({
+    ...base,
+    type: 'main_frame',
+    url: 'https://example.com/api/export',
+    contentType: 'application/json',
+    contentDisposition: 'attachment',
+    contentLength: 4096
+  });
+  assert.equal(unnamedNavigation.capture, true);
 });
 
 test('does not flood NDM with TS segments', () => {

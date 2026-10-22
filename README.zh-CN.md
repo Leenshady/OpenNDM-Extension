@@ -19,14 +19,22 @@
 
 ## 环境要求
 
-- 支持 Manifest V3 的 Chrome 或 Chromium 浏览器（建议 Chrome 116+）。
+- 支持 Manifest V3 的 Chrome、Edge 或其他 Chromium 浏览器（建议 116 及以上）。
 - 已安装并运行 [Neat Download Manager](https://www.neatdownloadmanager.com/)。
 - NDM 默认本地 WebSocket 端口为 `10007`。如果你在 NDM 中改过端口，请在本扩展中填写相同端口。
 
-## 安装（开发者模式）
+## 安装
+
+### 从 Edge 扩展商店安装（推荐）
+
+[开源NDM扩展 · Microsoft Edge 加载项](https://microsoftedge.microsoft.com/addons/detail/iikaogclapbbpffhjjhdnnbeenfidllj)
+
+在 Edge 中打开链接，点击 **获取** 即可安装。首次使用请启动 NDM，并在弹窗中确认连接状态。
+
+### 开发者模式（Chrome / Chromium / Edge）
 
 1. 下载或克隆本项目，并放在固定位置。
-2. 打开 `chrome://extensions`。
+2. 打开 `chrome://extensions`（Edge 为 `edge://extensions`）。
 3. 打开右上角的 **开发者模式**。
 4. 点击 **加载已解压的扩展程序**，选择包含 `manifest.json` 的文件夹。
 5. 将 **开源NDM扩展** 固定到工具栏。
@@ -40,7 +48,7 @@
 
 打开网页并点击普通下载链接。如果响应是支持的文件类型，扩展会发送给 NDM，并默认取消 Chrome 中重复的下载。
 
-当 NDM 已连接且站点未被屏蔽时，JavaScript 调起的下载也会通过 `chrome.downloads.onCreated` 接管。
+当 NDM 已连接且站点未被屏蔽时，JavaScript 通过 `chrome.downloads.onCreated` 触发的下载也会被接管。但若页面用 `fetch`/XHR 取回文件再转成 `blob:` 下载（后台系统的导出、附件按钮常见），真实文件名只存在于页面里，NDM 只能按服务器的 `Content-Disposition` 或 URL 命名；这类响应会留给浏览器完成，避免出现「NDM 存成哈希名、浏览器又下一份」的重复下载。
 
 ### 跳过单次下载
 
@@ -159,3 +167,11 @@ scripts/make_icons.py    可重复生成的图标脚本
 本项目使用 **GNU General Public License v3.0 or later**（`GPL-3.0-or-later`）。详见 [LICENSE](LICENSE)。
 
 本项目是独立重写版本。Neat Download Manager 是其作者开发的独立软件，本项目与其没有隶属或背书关系。
+
+## 署名
+
+本项目的代码、测试、构建脚本、文档以及中英文注释，均由 AI 编程助手 **DeepSeek Harness（deepseek-flash 模型）** 生成。
+
+- 生成者：DeepSeek Harness · deepseek-flash
+- 人类维护者的工作：提出需求、确认行为、验收并发布版本
+- 日期：2026-10-22
