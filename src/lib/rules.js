@@ -177,6 +177,9 @@ export function decideCapture(input = {}) {
   // 强制下载 MIME：主文档、对象和较大的未知接口才接管 / Forced-download MIME types.
   if (FORCED_DOWNLOAD_MIMES.has(contentType)) {
     if (type === 'main_frame' || type === 'object') return allow('normal', 'forced-download');
+    // XHR 的大二进制通常是页面资源（如在线文档的词库），没有附件头就不接管。
+    // Large XHR binaries are usually page assets (online-viewer dictionaries), so skip them.
+    if (type === 'xmlhttprequest') return deny('xhr-binary');
     if (size >= SMALL_MEDIA_FALLBACK) return allow('normal', 'large-binary');
     return deny('small-binary');
   }

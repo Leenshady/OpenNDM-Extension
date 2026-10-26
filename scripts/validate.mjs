@@ -34,11 +34,21 @@ function requireFile(relativePath, label) {
   }
 }
 
+// Chrome 版本号：1-4 个点分整数，取值 0-65535，非零数字不能以 0 开头。
+// Chrome versions: 1-4 dot-separated integers, 0-65535, no leading zeroes.
+function isChromeVersion(value) {
+  const parts = String(value || '').split('.');
+  if (parts.length < 1 || parts.length > 4) return false;
+  return parts.every((part) => /^(?:0|[1-9]\d*)$/.test(part) && Number(part) <= 65535);
+}
+
 const manifest = readJson('manifest.json');
 if (manifest) {
   if (manifest.manifest_version !== 3) errors.push('manifest.json: manifest_version must be 3');
   if (manifest.default_locale !== 'en') errors.push('manifest.json: default_locale must be en for fallback');
-  if (manifest.version !== '0.1') errors.push('manifest.json: version must be 0.1');
+  if (!isChromeVersion(manifest.version)) {
+    errors.push('manifest.json: version must be 1-4 dot-separated integers (0-65535), e.g. 0.1.1');
+  }
   if (manifest.background?.type !== 'module') errors.push('manifest.json: background.type must be module');
   if (!manifest.background?.service_worker) errors.push('manifest.json: missing background.service_worker');
   else requireFile(manifest.background.service_worker, 'manifest.background');
@@ -78,6 +88,13 @@ if (manifest) {
       if (!localeJson[key]?.message) errors.push(`${localePath}: missing manifest key ${key}`);
     }
   }
+}
+
+// 扩展版本号以 manifest 为准，package.json 必须同步。
+// The manifest owns the version; package.json must mirror it.
+const packageJson = readJson('package.json');
+if (manifest && packageJson && packageJson.version !== manifest.version) {
+  errors.push(`package.json: version (${packageJson.version}) must match manifest.json (${manifest.version})`);
 }
 
 function walkHtml(relativePath) {

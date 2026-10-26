@@ -40,7 +40,7 @@ Open the link in Edge and click **Get**. Start NDM first, then open the popup an
 5. Pin **OpenNDM-Extension** to the toolbar.
 6. Start NDM, open the popup, and click **Test** if the status is not connected.
 
-> Chrome’s “Load unpacked” mode is for development and personal use. To publish, run `npm run package` to build `dist/openndm-extension-v0.1.zip` and submit it to the Chrome Web Store under the GPL terms.
+> Chrome’s “Load unpacked” mode is for development and personal use. To publish, run `npm run package` to build `dist/openndm-extension-v<version>.zip` and submit it to the Chrome Web Store under the GPL terms.
 
 ## Usage
 
@@ -127,6 +127,10 @@ npm run package # validate, then build dist/openndm-extension-v<version>.zip
 No build step is required. Load the folder directly in Chrome.
 
 The release archive holds runtime files only. The script starts at `manifest.json` and follows HTML `<link>`/`<script>`/`<img>`, CSS `url()`, and ES module `import` references, then adds every locale and `LICENSE`; tests, scripts, and READMEs stay out. Use `node scripts/package.mjs --dry-run` to preview the file list or `--out <file.zip>` to change the destination. Timestamps are fixed, so identical sources produce an identical archive.
+
+### Versioning
+
+The extension version lives in `manifest.json` (`version`) and is mirrored in `package.json`; `npm run check` verifies they match. Bump the last component on every change (`0.1.2` → `0.1.3`) unless stated otherwise.
 
 ### Project layout
 

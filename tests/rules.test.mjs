@@ -233,10 +233,52 @@ test('prefers a filename from Content-Disposition over the URL extension', () =>
 test('handles octet-stream conservatively', () => {
   const small = decideCapture({ ...base, url: 'https://example.com/api/blob', contentType: 'application/octet-stream', contentLength: 100_000 });
   assert.equal(small.capture, false);
+  // XHR 的大二进制按页面资源处理 / Large XHR binaries are treated as page assets.
   const large = decideCapture({ ...base, url: 'https://example.com/api/blob', contentType: 'application/octet-stream', contentLength: 2 * 1024 * 1024 });
-  assert.equal(large.capture, true);
+  assert.equal(large.capture, false);
+  assert.equal(large.reason, 'xhr-binary');
+  // 非 XHR 的大二进制仍然接管 / Large non-XHR binaries are still captured.
+  const other = decideCapture({ ...base, type: 'other', url: 'https://example.com/api/blob', contentType: 'application/octet-stream', contentLength: 2 * 1024 * 1024 });
+  assert.equal(other.capture, true);
   const mainFrame = decideCapture({ ...base, type: 'main_frame', url: 'https://example.com/download/42', contentType: 'application/octet-stream' });
   assert.equal(mainFrame.capture, true);
+});
+
+test('ignores large viewer dictionaries fetched by XHR', () => {
+  // WPS 在线文档的词库：octet-stream + 5MB + 无 Content-Disposition。
+  // WPS online-viewer dictionaries: octet-stream, ~5 MB, no Content-Disposition.
+  const dict = decideCapture({
+    ...base,
+    url: 'https://netdisk-kingsoft.baidupcs.com/wpsnew/mgr/office/cdn/weboffice-static/lexicon2/jieba.dict.utf8',
+    contentType: 'application/octet-stream',
+    contentLength: 5_071_204
+  });
+  assert.equal(dict.capture, false);
+  // .utf8 属于“仅显式下载”扩展名，优先于 XHR 判定触发。
+  // .utf8 is explicit-only, which triggers before the XHR-binary check.
+  assert.equal(dict.reason, 'explicit-only');
+
+  // 不是 XHR 时，.utf8 扩展名也会兜底 / The .utf8 extension also blocks non-XHR paths.
+  const other = decideCapture({
+    ...base,
+    type: 'other',
+    url: 'https://netdisk-kingsoft.baidupcs.com/wpsnew/mgr/office/cdn/weboffice-static/lexicon2/idf.utf8',
+    contentType: 'application/octet-stream',
+    contentLength: 5_998_717
+  });
+  assert.equal(other.capture, false);
+  assert.equal(other.reason, 'explicit-only');
+
+  // 用户明确下载（附件）仍然接管 / An explicit attachment still wins.
+  const attached = decideCapture({
+    ...base,
+    type: 'main_frame',
+    url: 'https://netdisk-kingsoft.baidupcs.com/wpsnew/mgr/office/cdn/weboffice-static/lexicon2/jieba.dict.utf8',
+    contentType: 'application/octet-stream',
+    contentDisposition: 'attachment; filename="jieba.dict.utf8"',
+    contentLength: 5_071_204
+  });
+  assert.equal(attached.capture, true);
 });
 
 test('rejects partial responses, blocked sites, bypass, and disabled capture', () => {

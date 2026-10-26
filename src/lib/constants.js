@@ -37,7 +37,7 @@ export const DOCUMENT_EXTENSIONS = new Set([
 // 图片和网页资源默认只允许“另存为/附件”触发 / Images and web assets need an explicit attachment.
 export const EXPLICIT_ONLY_EXTENSIONS = new Set([
   'HTML', 'HTM', 'MHT', 'MHTML', 'SHTML', 'SHTM', 'XHT', 'XHTM', 'XHTML',
-  'XML', 'TXT', 'CSS', 'JS', 'MJS', 'JSON', 'MAP', 'PHP', 'ASP', 'ASPX',
+  'XML', 'TXT', 'UTF8', 'CSS', 'JS', 'MJS', 'JSON', 'MAP', 'PHP', 'ASP', 'ASPX',
   'CGI', 'WASM', 'EOT', 'TTF', 'OTF', 'WOFF', 'WOFF2', 'GIF', 'ICO', 'CUR',
   'JPEG', 'JPG', 'PNG', 'APNG', 'WEBP', 'BMP', 'SVG', 'SVGZ', 'TIF', 'TIFF',
   'XBM', 'AVIF', 'HEIC', 'HEIF', 'DICT', 'DO', 'ACZ', 'AZC', 'TPL', 'OSD',

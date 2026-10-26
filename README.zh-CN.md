@@ -40,7 +40,7 @@
 5. 将 **开源NDM扩展** 固定到工具栏。
 6. 启动 NDM，打开弹窗；如果显示未连接，点击 **测试**。
 
-> “加载已解压”适合开发和自用。若要发布，运行 `npm run package` 生成 `dist/openndm-extension-v0.1.zip`，按 GPL 条款提交到 Chrome 应用商店。
+> “加载已解压”适合开发和自用。若要发布，运行 `npm run package` 生成 `dist/openndm-extension-v<version>.zip`，按 GPL 条款提交到 Chrome 应用商店。
 
 ## 使用说明
 
@@ -127,6 +127,10 @@ npm run package # 校验后打包到 dist/openndm-extension-v<version>.zip
 无需构建，直接在 Chrome 中加载文件夹即可。
 
 发布包只包含运行时文件：脚本从 `manifest.json` 出发，顺着 HTML `<link>`/`<script>`/`<img>`、CSS `url()` 与 ES module `import` 逐层收集，再补上各语言包与 `LICENSE`；测试、脚本、README 等不会进入压缩包。`node scripts/package.mjs --dry-run` 可先查看清单，`--out <file.zip>` 可指定输出位置。时间戳固定，同样的源码重复打包结果一致。
+
+### 版本号
+
+扩展版本号写在 `manifest.json` 的 `version`，并同步到 `package.json`；`npm run check` 会校验两者一致。每次修改都递增最后一位（`0.1.2` → `0.1.3`），除非另有说明。
 
 ### 目录结构
 
