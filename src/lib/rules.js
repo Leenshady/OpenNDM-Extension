@@ -150,6 +150,12 @@ export function decideCapture(input = {}) {
   if (NON_DOWNLOAD_MIMES.has(contentType)) return deny('browser-asset');
   if (EXPLICIT_ONLY_EXTENSIONS.has(ext)) return deny('explicit-only');
 
+  // CDN 常用 video/mp4 或 octet-stream 掩盖 .m4s 等分片，按 URL 扩展名再拦一次。
+  // CDNs often hide .m4s fragments behind video/mp4 or octet-stream; check the URL extension too.
+  if (STREAM_SEGMENT_EXTENSIONS.has(urlExt) && type !== 'main_frame' && type !== 'media') {
+    return deny('stream-segment');
+  }
+
   // 媒体请求：跳过播放器分片，避免疯狂弹窗 / Skip player segments to avoid dialog floods.
   if (isMedia) {
     if (input.captureMedia === false) return deny('media-disabled');
@@ -166,6 +172,11 @@ export function decideCapture(input = {}) {
     return allow('media', 'media-response');
   }
 
+  // fetch/XHR 取回的文件由页面自己处理（通常转成 blob 再下载），自动接管只会重复下载或下到配置包。
+  // fetch/XHR responses are consumed by the page (usually re-wrapped as a blob download);
+  // capturing them either duplicates the download or grabs an app config bundle.
+  if (type === 'xmlhttprequest') return deny('xhr-fetch');
+
   // 已知可下载扩展名 / Known downloadable extensions.
   if (AUTO_CAPTURE_EXTENSIONS.has(ext)) {
     if (rawLength === 0 && input.contentLength !== undefined && input.contentLength !== null) {
@@ -177,9 +188,6 @@ export function decideCapture(input = {}) {
   // 强制下载 MIME：主文档、对象和较大的未知接口才接管 / Forced-download MIME types.
   if (FORCED_DOWNLOAD_MIMES.has(contentType)) {
     if (type === 'main_frame' || type === 'object') return allow('normal', 'forced-download');
-    // XHR 的大二进制通常是页面资源（如在线文档的词库），没有附件头就不接管。
-    // Large XHR binaries are usually page assets (online-viewer dictionaries), so skip them.
-    if (type === 'xmlhttprequest') return deny('xhr-binary');
     if (size >= SMALL_MEDIA_FALLBACK) return allow('normal', 'large-binary');
     return deny('small-binary');
   }

@@ -118,12 +118,12 @@ globalThis.WebSocket = FakeWebSocket;
 await import('../src/background.js?capture-test');
 await new Promise((resolve) => setTimeout(resolve, 120));
 
-function fireRequest({ requestId, url, statusCode = 200, contentType = 'application/zip', contentLength = '4096' }) {
+function fireRequest({ requestId, url, type = 'main_frame', statusCode = 200, contentType = 'application/zip', contentLength = '4096' }) {
   const base = {
     requestId,
     url,
     method: 'GET',
-    type: 'main_frame',
+    type,
     tabId: tab.id,
     frameId: 0,
     initiator: 'https://example.com',
@@ -144,14 +144,10 @@ function fireRequest({ requestId, url, statusCode = 200, contentType = 'applicat
 test('captures a ZIP response and cancels the duplicate browser download', async () => {
   assert.equal(FakeWebSocket.instances.length > 0, true);
   fireRequest({ requestId: 'r1', url: 'https://example.com/file.zip' });
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  await new Promise((resolve) => setTimeout(resolve, 120));
 
-  const captured = sentMessages.find((message) => message.includes('2:https://example.com/file.zip'));
-  assert.ok(captured);
-  assert.match(captured, /\r\n6:normal\r\n/);
-  assert.match(captured, /\r\n7:4096\r\n/);
-  assert.match(captured, /\r\n8:application\/zip\r\n/);
-
+  // 观察窗口内出现浏览器下载且名字一致 → 发送 NDM 并取消浏览器副本。
+  // A browser download with the same name arrives inside the grace window → send and cancel it.
   events.downloadCreated[0]?.({
     id: 91,
     url: 'https://example.com/file.zip',
@@ -164,8 +160,85 @@ test('captures a ZIP response and cancels the duplicate browser download', async
     fileSize: 4096,
     totalBytes: 4096
   });
-  await new Promise((resolve) => setTimeout(resolve, 80));
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+
+  const captured = sentMessages.find((message) => message.includes('2:https://example.com/file.zip'));
+  assert.ok(captured);
+  assert.match(captured, /\r\n6:normal\r\n/);
+  assert.match(captured, /\r\n7:4096\r\n/);
+  assert.match(captured, /\r\n8:application\/zip\r\n/);
   assert.deepEqual(canceledIds, [91]);
+});
+
+test('keeps Chrome\'s copy when it has a better filename', async () => {
+  const before = sentMessages.length;
+  const url = 'https://example.com/hash-6f2a1c9d.zip';
+  fireRequest({ requestId: 'r6', url, contentType: 'application/zip', contentLength: '4096' });
+  await new Promise((resolve) => setTimeout(resolve, 120));
+
+  // 页面用 <a download> 给了友好名，NDM 只会存 hash-6f2a1c9d.zip → 保留浏览器副本。
+  // The page supplied a friendly name via <a download>; NDM would keep the hash name.
+  events.downloadCreated[0]?.({
+    id: 95,
+    url,
+    finalUrl: url,
+    tabId: tab.id,
+    referrer: 'https://example.com/page',
+    filename: 'C:\\Downloads\\驱动安装包.zip',
+    mime: 'application/zip',
+    fileSize: 4096,
+    totalBytes: 4096
+  });
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+
+  assert.equal(sentMessages.length, before);
+  assert.equal(canceledIds.includes(95), false);
+});
+
+test('sends the post-redirect URL for browser downloads', async () => {
+  const before = sentMessages.length;
+  events.downloadCreated[0]?.({
+    id: 94,
+    url: 'https://example.com/go',
+    finalUrl: 'https://cdn.example.com/releases/app.zip',
+    tabId: tab.id,
+    referrer: 'https://example.com/page',
+    filename: 'C:\\Downloads\\app.zip',
+    mime: 'application/zip',
+    fileSize: 4096,
+    totalBytes: 4096
+  });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  assert.equal(sentMessages.length, before + 1);
+  assert.ok(String(sentMessages[before]).includes('2:https://cdn.example.com/releases/app.zip'));
+});
+
+test('does not auto-download media played by the page', async () => {
+  const before = sentMessages.length;
+  fireRequest({
+    requestId: 'r4',
+    type: 'xmlhttprequest',
+    url: 'https://cdn.example.com/show/ep1.f4v',
+    contentType: 'video/x-flv',
+    contentLength: '6344530'
+  });
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(sentMessages.length, before);
+});
+
+test('still sends media opened directly as a navigation', async () => {
+  const before = sentMessages.length;
+  fireRequest({
+    requestId: 'r5',
+    type: 'main_frame',
+    url: 'https://cdn.example.com/movie.mp4',
+    contentType: 'video/mp4',
+    contentLength: '8388608'
+  });
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  assert.equal(sentMessages.length, before + 1);
+  assert.ok(String(sentMessages[before]).includes('https://cdn.example.com/movie.mp4'));
 });
 
 test('Ctrl bypass prevents a new capture', async () => {
@@ -176,6 +249,27 @@ test('Ctrl bypass prevents a new capture', async () => {
   fireRequest({ requestId: 'r2', url: 'https://example.com/skipped.zip' });
   await new Promise((resolve) => setTimeout(resolve, 180));
   assert.equal(sentMessages.length, before);
+});
+
+test('does not forward restored DASH fragments to NDM', async () => {
+  // 等上一个用例的 Ctrl 绕过窗口过期 / Let the previous bypass window expire first.
+  await new Promise((resolve) => setTimeout(resolve, 1600));
+  const before = sentMessages.length;
+  const url = 'https://upos-sz-mirrorcos.bilivideo.com/upgcxcode/26/70/228907026/228907026-1-100023.m4s?e=abc&deadline=1790649050';
+  events.downloadCreated[0]?.({
+    id: 93,
+    url,
+    finalUrl: url,
+    tabId: tab.id,
+    referrer: 'https://www.bilibili.com/video/BV1xx411c7mD',
+    filename: 'C:\\Downloads\\228907026-1-100023.m4s',
+    mime: 'application/octet-stream',
+    fileSize: 0,
+    totalBytes: 0
+  });
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(sentMessages.length, before);
+  assert.equal(canceledIds.includes(93), false);
 });
 
 test('blocked sites prevent capture and let the browser download', async () => {

@@ -1,6 +1,6 @@
 {
   "name": "openndm-extension",
-  "version": "0.1.2",
+  "version": "0.1.6",
   "private": true,
   "type": "module",
   "description": "OpenNDM-Extension: Manifest V3 download catcher for Neat Download Manager",

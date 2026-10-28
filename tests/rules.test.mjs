@@ -30,7 +30,7 @@ const base = {
 };
 
 test('captures a normal ZIP download', () => {
-  const result = decideCapture({ ...base, url: 'https://example.com/archive.zip', contentType: 'application/zip', contentLength: 1024 });
+  const result = decideCapture({ ...base, type: 'main_frame', url: 'https://example.com/archive.zip', contentType: 'application/zip', contentLength: 1024 });
   assert.equal(result.capture, true);
   assert.equal(result.kind, 'normal');
   assert.equal(result.ext, 'ZIP');
@@ -210,6 +210,7 @@ test('keeps normal Bilibili video downloads working', () => {
 test('uses a downloadable MIME for extensionless or script URLs', () => {
   const result = decideCapture({
     ...base,
+    type: 'main_frame',
     url: 'https://example.com/download.php?id=42',
     contentType: 'application/zip',
     contentLength: 4096
@@ -221,6 +222,7 @@ test('uses a downloadable MIME for extensionless or script URLs', () => {
 test('prefers a filename from Content-Disposition over the URL extension', () => {
   const result = decideCapture({
     ...base,
+    type: 'main_frame',
     url: 'https://example.com/download.php?id=42',
     contentType: 'application/octet-stream',
     contentDisposition: 'inline; filename="report.zip"',
@@ -236,12 +238,25 @@ test('handles octet-stream conservatively', () => {
   // XHR 的大二进制按页面资源处理 / Large XHR binaries are treated as page assets.
   const large = decideCapture({ ...base, url: 'https://example.com/api/blob', contentType: 'application/octet-stream', contentLength: 2 * 1024 * 1024 });
   assert.equal(large.capture, false);
-  assert.equal(large.reason, 'xhr-binary');
+  assert.equal(large.reason, 'xhr-fetch');
   // 非 XHR 的大二进制仍然接管 / Large non-XHR binaries are still captured.
   const other = decideCapture({ ...base, type: 'other', url: 'https://example.com/api/blob', contentType: 'application/octet-stream', contentLength: 2 * 1024 * 1024 });
   assert.equal(other.capture, true);
   const mainFrame = decideCapture({ ...base, type: 'main_frame', url: 'https://example.com/download/42', contentType: 'application/octet-stream' });
   assert.equal(mainFrame.capture, true);
+});
+
+test('does not auto-capture .z data files', () => {
+  // 爱奇艺弹幕等资源用 .z 扩展名，不是 Unix 压缩包 / iQiyi danmaku assets use .z, not Unix compress.
+  const result = decideCapture({
+    ...base,
+    type: 'other',
+    url: 'https://cmts.iqiyi.com/bullet/avatar.z',
+    contentType: 'application/octet-stream',
+    contentLength: 545_534
+  });
+  assert.equal(result.capture, false);
+  assert.equal(result.reason, 'explicit-only');
 });
 
 test('ignores large viewer dictionaries fetched by XHR', () => {
@@ -362,6 +377,29 @@ test('ignores attachment responses from browser-native internal APIs', () => {
   assert.equal(unnamedNavigation.capture, true);
 });
 
+test('ignores configuration bundles fetched by XHR', () => {
+  // B 站页面用 fetch 预取的前端配置包，不是用户下载。
+  // Bilibili prefetches front-end config bundles with fetch, not as user downloads.
+  const xhr = decideCapture({
+    ...base,
+    url: 'https://i0.hdslb.com/bfs/fawkes/config/prod/web_main_39232.zip',
+    contentType: 'application/zip',
+    contentLength: 2_000_000
+  });
+  assert.equal(xhr.capture, false);
+  assert.equal(xhr.reason, 'xhr-fetch');
+
+  // 用户点击 .zip 链接（顶层导航）仍然交给 NDM。
+  const navigation = decideCapture({
+    ...base,
+    type: 'main_frame',
+    url: 'https://i0.hdslb.com/bfs/fawkes/config/prod/web_main_39232.zip',
+    contentType: 'application/zip',
+    contentLength: 2_000_000
+  });
+  assert.equal(navigation.capture, true);
+});
+
 test('does not flood NDM with TS segments', () => {
   const result = decideCapture({
     ...base,
@@ -371,6 +409,51 @@ test('does not flood NDM with TS segments', () => {
   });
   assert.equal(result.capture, false);
   assert.equal(result.reason, 'stream-segment');
+});
+
+test('ignores DASH fragments even when the CDN reports video/mp4', () => {
+  // B 站 DASH 音视频轨：.m4s + video/mp4 或 octet-stream，签名会过期。
+  // Bilibili DASH tracks: .m4s behind video/mp4 or octet-stream, signed and short-lived.
+  const url = 'https://upos-sz-mirrorcos.bilivideo.com/upgcxcode/26/70/228907026/228907026-1-100023.m4s?e=abc&deadline=1790649050';
+
+  const octet = decideCapture({
+    ...base,
+    type: 'other',
+    url,
+    contentType: 'application/octet-stream',
+    contentLength: 0
+  });
+  assert.equal(octet.capture, false);
+  assert.equal(octet.reason, 'stream-segment');
+
+  const masked = decideCapture({
+    ...base,
+    type: 'other',
+    url,
+    contentType: 'video/mp4',
+    contentLength: 50 * 1024 * 1024
+  });
+  assert.equal(masked.capture, false);
+  assert.equal(masked.reason, 'stream-segment');
+
+  const xhr = decideCapture({
+    ...base,
+    type: 'xmlhttprequest',
+    url,
+    contentType: 'video/mp4',
+    contentLength: 50 * 1024 * 1024
+  });
+  assert.equal(xhr.capture, false);
+  assert.equal(xhr.reason, 'stream-segment');
+
+  // 用户直接打开该地址（顶层导航）仍然交给 NDM。
+  const navigation = decideCapture({
+    ...base,
+    type: 'main_frame',
+    url,
+    contentType: 'application/octet-stream'
+  });
+  assert.equal(navigation.capture, true);
 });
 
 test('parses filenames and extensions', () => {

@@ -41,7 +41,7 @@ export const EXPLICIT_ONLY_EXTENSIONS = new Set([
   'CGI', 'WASM', 'EOT', 'TTF', 'OTF', 'WOFF', 'WOFF2', 'GIF', 'ICO', 'CUR',
   'JPEG', 'JPG', 'PNG', 'APNG', 'WEBP', 'BMP', 'SVG', 'SVGZ', 'TIF', 'TIFF',
   'XBM', 'AVIF', 'HEIC', 'HEIF', 'DICT', 'DO', 'ACZ', 'AZC', 'TPL', 'OSD',
-  'PEM', 'BR', 'BIN'
+  'PEM', 'BR', 'BIN', 'Z'
 ]);
 
 // 可直接自动捕获的扩展名 / Extensions eligible for automatic capture.
