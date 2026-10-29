@@ -10,7 +10,7 @@
 - **按住 Ctrl 跳过**：按住 **Ctrl**（macOS 为 **⌘ Command**）点击链接，本次下载交给浏览器，并显示简短提示。
 - **屏蔽站点**：可在弹窗或页面右键菜单屏蔽当前站点。该站点及其子域名的所有下载都会绕过 NDM。
 - **页面媒体面板**：使用 Shadow DOM 的现代浮层，收集 `<video>`、`<audio>`、`<source>`、`<embed>`、`<object>`、网络媒体，以及 B 站 `__playinfo__` 中的音视频轨（包括 `<video>` 使用 `blob:` 的 MSE 页面）。点击即可发送到 NDM。
-- **精确规则**：只在明确的下载意图下接管——顶层导航、带文件名的 `Content-Disposition` 附件、浏览器下载事件；页面自己的 `fetch`/XHR、子框架/`object`/worker 请求、配置包、流媒体分片、播放器预览图/雪碧图和 `.z` 数据文件一律不碰，小于阈值的媒体响应交给浏览器。
+- **精确规则**：只在明确的下载意图下接管——顶层导航、带文件名的 `Content-Disposition` 附件、浏览器下载事件；页面自己的 `fetch`/XHR、子框架/`object`/worker 请求、配置包、流媒体分片、播放器预览图/雪碧图和 `.z` 数据文件一律不碰；RFC 2047 编码文件名的下载交给浏览器还原名称。
 - **宁可漏拦，不可误下**：浏览器下载事件会再用同一套规则复核一次；拿不准、或浏览器已经下完的，就留给浏览器。漏掉一次接管可以手动重来，误下一份多余文件却可能带来真实损失。
 - **媒体只进面板**：页面自动播放的广告、预告、DASH 轨只出现在右下角媒体面板，不会自动下载；点面板里的条目才会发送给 NDM。只有直接打开媒体地址（顶层导航）才会自动捕获。
 - **兼容 NDM 协议**：连接 `ws://127.0.0.1:10007/download`，使用 `neatextension.v1` 子协议；发送 Cookie、Referer、Origin、Content-Type、Content-Disposition、大小、POST 数据和 `X-*` 请求头。
@@ -73,7 +73,7 @@
 
 面板刻意保持保守：DRM/加密流、`blob:`、`data:` 以及仅通过 MSE 播放的流无法交给 NDM，因此不会列出。
 
-网易邮箱（126 / 163 / yeah.net）的附件下载地址带一次性票据：浏览器请求过之后，NDM 再请求只会收到 `416` 或一个 HTML 错误页，于是只能存成 `readdata.jsp`。因此扩展会把这类链接留给浏览器下载，并在页面上提示一次。
+有些服务器把文件名按 **RFC 2047** 编码（`Content-Disposition: attachment; filename="=?UTF-8?B?...?="`，网易邮箱等较常见）。NDM 无法解码这种名字，只能退回 URL 里的文件名；扩展会把这类下载整个交给浏览器，由浏览器还原原始文件名。
 
 ## 支持的文件类型
 
@@ -134,9 +134,25 @@ npm run package # 校验后打包到 dist/openndm-extension-v<version>.zip
 
 发布包只包含运行时文件：脚本从 `manifest.json` 出发，顺着 HTML `<link>`/`<script>`/`<img>`、CSS `url()` 与 ES module `import` 逐层收集，再补上各语言包与 `LICENSE`；测试、脚本、README 等不会进入压缩包。`node scripts/package.mjs --dry-run` 可先查看清单，`--out <file.zip>` 可指定输出位置。时间戳固定，同样的源码重复打包结果一致。
 
+### 网页冒烟测试
+
+`npm run test:web` 会用临时配置启动一个真实浏览器，加载扩展并依次打开一批免登录的国内常用站点，观察是否触发预期以外的下载：
+
+```bash
+npm run test:web                     # 默认 Chrome，每个站点停留 8 秒
+npm run test:web -- --seconds 7      # 调整每个站点的停留时间
+npm run test:web -- --browser edge   # 换用 Edge
+npm run test:web -- --headed         # 显示浏览器窗口，便于观察
+npm run test:web -- --filter 知乎     # 只跑匹配的站点
+```
+
+扩展在测试里连接的是脚本自带的「假 NDM」：它只记录扩展发出的消息，不会真正下载，也不会碰本机正在运行的 NDM。每个站点都会校验页面确实加载（资源数与标题），未加载的站点会标记为跳过而不计入结论。
+
 ### 版本号
 
-扩展版本号写在 `manifest.json` 的 `version`，并同步到 `package.json`；`npm run check` 会校验两者一致。每次修改都递增最后一位（`0.1.9` → `0.1.10`），除非另有说明。
+扩展版本号写在 `manifest.json` 的 `version`，并同步到 `package.json`；`npm run check` 会校验两者一致。每次修改递增第三位，第三位满 10 进一到第二位（`0.1.9` → `0.2.0`，`0.2.9` → `0.3.0`）。
+
+打包不在每次修改时执行：只有明确要求发布时才运行 `npm run package`，避免产生大量过期压缩包。
 
 ### 目录结构
 

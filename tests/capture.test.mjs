@@ -118,7 +118,7 @@ globalThis.WebSocket = FakeWebSocket;
 await import('../src/background.js?capture-test');
 await new Promise((resolve) => setTimeout(resolve, 120));
 
-function fireRequest({ requestId, url, type = 'main_frame', statusCode = 200, contentType = 'application/zip', contentLength = '4096' }) {
+function fireRequest({ requestId, url, type = 'main_frame', statusCode = 200, contentType = 'application/zip', contentLength = '4096', contentDisposition = '' }) {
   const base = {
     requestId,
     url,
@@ -131,13 +131,15 @@ function fireRequest({ requestId, url, type = 'main_frame', statusCode = 200, co
   };
   events.beforeRequest[0]?.(base);
   events.beforeSendHeaders[0]?.({ requestId, requestHeaders: [] });
+  const responseHeaders = [
+    { name: 'Content-Type', value: contentType },
+    { name: 'Content-Length', value: contentLength }
+  ];
+  if (contentDisposition) responseHeaders.push({ name: 'Content-Disposition', value: contentDisposition });
   events.headersReceived[0]?.({
     ...base,
     statusCode,
-    responseHeaders: [
-      { name: 'Content-Type', value: contentType },
-      { name: 'Content-Length', value: contentLength }
-    ]
+    responseHeaders
   });
 }
 
@@ -238,22 +240,31 @@ test('still sends media opened directly as a navigation', async () => {
   assert.ok(String(sentMessages[before]).includes('https://cdn.example.com/movie.mp4'));
 });
 
-test('does not forward one-time mail attachments from browser downloads', async () => {
+test('does not forward RFC 2047 named downloads from the browser', async () => {
   const before = sentMessages.length;
-  const url = 'https://mail.126.com/js6/read/readdata.jsp?sid=x&mid=420:abc&part=4&mode=download&l=read&action=download_attach';
-  // 头部捕获已拒绝这类链接，兜底路径也不能补发 / The header path denies these; the fallback must not resend.
+  const url = 'https://mail.example.com/read/readdata.jsp?sid=x&action=download_attach';
+  // 头部阶段已按 RFC 2047 文件名拒绝，兜底路径也不能补发。
+  // The header path denies it because of the encoded filename; the fallback must not resend.
+  fireRequest({
+    requestId: 'r9',
+    url,
+    contentType: 'application/octet-stream',
+    contentLength: '20242',
+    contentDisposition: 'attachment; filename="=?UTF8?B?5rWL6K+V6YCa55+lLnBkZg==?="'
+  });
+  await new Promise((resolve) => setTimeout(resolve, 150));
   events.downloadCreated[0]?.({
     id: 97,
     url,
     finalUrl: url,
     tabId: tab.id,
-    referrer: 'https://mail.126.com/js6/main.jsp?sid=x',
-    filename: 'C:\\Downloads\\readdata.html',
-    mime: 'text/html',
+    referrer: 'https://mail.example.com/main',
+    filename: 'C:\\Downloads\\通知.pdf',
+    mime: 'application/octet-stream',
     fileSize: 20242,
     totalBytes: 20242
   });
-  await new Promise((resolve) => setTimeout(resolve, 300));
+  await new Promise((resolve) => setTimeout(resolve, 900));
 
   assert.equal(sentMessages.length, before);
   assert.equal(canceledIds.includes(97), false);

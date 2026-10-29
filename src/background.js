@@ -20,7 +20,7 @@ import {
   NON_DOWNLOAD_MIMES,
   REQUEST_TYPES
 } from './lib/constants.js';
-import { decideCapture, isNetEaseAttachmentUrl } from './lib/rules.js';
+import { decideCapture } from './lib/rules.js';
 import {
   isHostBlocked,
   isRequestBlocked,
@@ -65,8 +65,9 @@ const waitingFetches = new Map();
 const mediaByTab = new Map();
 // 面板默认最小化，只有显式展开过的标签页才会记录在此 / Tabs that expanded the panel.
 const panelOpenTabs = new Set();
-// 一次性邮件附件提示的去重记录 / Dedupe map for one-time attachment notices.
-const oneTimeNotices = new Map();
+// RFC 2047 文件名的下载只交给浏览器，这里记录相关 URL。
+// URLs whose Content-Disposition uses RFC 2047 names stay with the browser.
+const browserOnlyUrls = new Map();
 // 浏览器恢复下载时可能重放的 DASH 分片扩展名 / DASH fragments a restored download may replay.
 const DASH_FRAGMENT_EXTENSIONS = /^(?:M4S|CMFV|CMFA|CMFT)$/;
 const tabInfo = new Map();
@@ -348,18 +349,6 @@ async function manualDownload(options) {
       });
     }
     return { ok: false, error: 'site-blocked' };
-  }
-
-  // 网易邮箱附件链接无法被 NDM 重放，提示改用浏览器。
-  // NetEase attachment links cannot be replayed by NDM; ask for a browser download.
-  if (isNetEaseAttachmentUrl(url)) {
-    if (options.tabId >= 0) {
-      void sendTabMessage(options.tabId, {
-        type: MSG.SHOW_TOAST,
-        text: t('mailAttachmentBrowser', 'This mail attachment link cannot be used by NDM; the browser will download it.')
-      }, { frameId: 0 });
-    }
-    return { ok: false, error: 'one-time-attachment' };
   }
 
   const contentType = normalizeMime(options.contentType || '');
@@ -810,15 +799,11 @@ async function processHeaders(snapshot) {
     });
 
     if (!decision.capture) {
-      // 一次性邮件附件交给浏览器下载，并提示一次。
-      // One-time mail attachments stay in the browser; explain it once.
-      if (decision.reason === 'one-time-attachment'
-        && snapshot.tabId >= 0
-        && markOneTimeNotice(snapshot.url)) {
-        void sendTabMessage(snapshot.tabId, {
-          type: MSG.SHOW_TOAST,
-          text: t('mailAttachmentBrowser', 'This mail attachment link cannot be used by NDM; the browser will download it.')
-        }, { frameId: 0 });
+      // RFC 2047 文件名交给浏览器：记住这个 URL，浏览器下载事件出现时也不要再转给 NDM。
+      // RFC 2047 names stay in the browser; remember the URL so the download event is not forwarded.
+      if (decision.reason === 'rfc2047-filename') {
+        browserOnlyUrls.set(snapshot.url, Date.now() + 15_000);
+        pruneExpiring(browserOnlyUrls, 300);
       }
       return;
     }
@@ -928,15 +913,11 @@ function isRecentlySent(url) {
   return true;
 }
 
-// 同一附件只提示一次，避免重复请求刷屏。
-// Show the one-time attachment notice once per URL.
-function markOneTimeNotice(url) {
-  const now = Date.now();
-  const until = oneTimeNotices.get(url) || 0;
-  if (until > now) return false;
-  oneTimeNotices.set(url, now + 20_000);
-  pruneExpiring(oneTimeNotices, 60);
-  return true;
+// RFC 2047 文件名的下载是否应留在浏览器。
+// Whether a URL was flagged as an RFC 2047 named download.
+function isBrowserOnly(url) {
+  const until = browserOnlyUrls.get(url);
+  return Boolean(until && until > Date.now());
 }
 
 function markPendingCancel(url) {
@@ -983,9 +964,9 @@ async function onBrowserDownload(item) {
       || DASH_FRAGMENT_EXTENSIONS.test(extensionOf(targetUrl))) {
       return;
     }
-    // 一次性邮件附件由浏览器完成，兜底路径同样不能转给 NDM。
-    // One-time mail attachments stay in the browser; the fallback must not forward them either.
-    if (isNetEaseAttachmentUrl(targetUrl)) return;
+    // RFC 2047 文件名的下载由浏览器完成，兜底路径同样不能转给 NDM。
+    // RFC 2047 named downloads stay in the browser; the fallback must not forward them either.
+    if (isBrowserOnly(item.url) || isBrowserOnly(targetUrl)) return;
     if (isBypassed()) return;
 
     const tab = item.tabId >= 0 ? await getTabInfo(item.tabId) : null;

@@ -77,10 +77,6 @@ export function decideCapture(input = {}) {
     return deny('status');
   }
 
-  // 网易邮箱附件链接带有一次性下载票据，浏览器请求后 NDM 重发只会拿到 416。
-  // NetEase webmail attachments carry a one-time ticket: NDM's replay only gets a 416.
-  if (isNetEaseAttachmentUrl(input.url)) return deny('one-time-attachment');
-
   const contentType = normalizeMime(input.contentType);
   const contentDisposition = String(input.contentDisposition || '');
   const parsedDisposition = parseContentDisposition(contentDisposition);
@@ -129,6 +125,12 @@ export function decideCapture(input = {}) {
     result.kind = 'hls';
     return allow('hls', 'hls-playlist');
   }
+
+  // 服务器用 RFC 2047 编码文件名（网易邮箱等）：NDM 无法解码，只会按 URL 存成乱名，
+  // 这类下载交给浏览器才能保留原始文件名。
+  // RFC 2047 encoded filenames (NetEase mail and others) cannot be decoded by NDM, which would
+  // fall back to the URL; the browser handles these downloads so the original name is preserved.
+  if (!isMedia && hasRfc2047Name(parsedDisposition)) return deny('rfc2047-filename');
 
   // 明确的附件接管；但浏览器类 MIME（JSON/XML/JS 等）只有顶层导航才是用户要的文件。
   // Explicit attachments win, except browser-native MIMEs outside a top-level navigation
@@ -214,19 +216,13 @@ function isPreviewAssetUrl(value) {
   }
 }
 
-// 网易邮箱（126 / 163 / yeah.net）附件下载地址。
-// NetEase webmail attachment endpoint (126 / 163 / yeah.net).
-const NETEASE_MAIL_HOSTS = /(?:^|\.)(?:mail\.(?:126|163)\.com|mail\.yeah\.net)$/i;
+// RFC 2047 编码字（=?...?B?...?= / =?...?Q?...?=），常见于非标准的 Content-Disposition 文件名。
+// RFC 2047 encoded words, common in non-standard Content-Disposition filenames.
+const RFC2047_WORD = /=\?[^?\s]+\?[BbQq]\?[^?\s]*\?=/;
 
-export function isNetEaseAttachmentUrl(value) {
-  try {
-    const url = new URL(value);
-    if (!NETEASE_MAIL_HOSTS.test(url.hostname)) return false;
-    if (!/\/js6\/read\/readdata\.jsp$/i.test(url.pathname)) return false;
-    return /(?:^|[?&])action=download_attach(?:&|$)/i.test(url.search);
-  } catch {
-    return false;
-  }
+function hasRfc2047Name(disposition) {
+  const name = String(disposition?.filenameStar || disposition?.filename || '');
+  return RFC2047_WORD.test(name);
 }
 
 // 从文件名提取扩展名 / Read an extension from a filename.

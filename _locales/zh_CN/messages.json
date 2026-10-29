@@ -17,7 +17,6 @@
   "siteBlockedToast": { "message": "此站点已跳过 NDM" },
   "siteUnblockedToast": { "message": "此站点已启用 NDM" },
   "bypassToast": { "message": "已跳过 NDM · 使用浏览器下载" },
-  "mailAttachmentBrowser": { "message": "邮件附件链接不支持 NDM，请使用浏览器下载。" },
 
   "mediaPanelTitle": { "message": "页面媒体" },
   "mediaPanelSubtitle": { "message": "使用 Neat Download Manager 下载" },

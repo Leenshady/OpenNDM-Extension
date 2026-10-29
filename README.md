@@ -10,7 +10,7 @@ A clean **Manifest V3** rewrite of the Neat Download Manager browser extension. 
 - **Ctrl to skip** — hold **Ctrl** (or **⌘ Command** on macOS) while clicking a link; that download stays in Chrome. A small toast confirms the bypass.
 - **Block sites** — block the current site from the popup or the page context menu. Every download from that host and its subdomains bypasses NDM.
 - **Page media panel** — a modern Shadow DOM panel lists `<video>`, `<audio>`, `<source>`, `<embed>`, and `<object>` media, plus network media and Bilibili `__playinfo__` tracks (including MSE pages whose `<video>` uses `blob:`). Click an item to send it to NDM.
-- **Precise rules** — captures only clear download intent: top-level navigations, named `Content-Disposition` attachments, and browser download events. Page `fetch`/XHR calls, subframe/`object`/worker requests, config bundles, streaming segments, player preview sprites (including Bilibili `videoshot`), and `.z` data files are left alone; media responses below the configurable threshold stay in the browser.
+- **Precise rules** — captures only clear download intent: top-level navigations, named `Content-Disposition` attachments, and browser download events. Page `fetch`/XHR calls, subframe/`object`/worker requests, config bundles, streaming segments, player preview sprites (including Bilibili `videoshot`), and `.z` data files are left alone; downloads whose filename is an RFC 2047 word are handed to the browser to restore the name.
 - **Better to miss than to over-capture** — a browser download event is re-checked against the same rules; anything uncertain, or already finished by the browser, stays with the browser. Missing one takeover is easy to redo; downloading an extra unintended file is not.
 - **Media stays in the panel** — ads, previews, and DASH tracks played by a page only appear in the bottom-right media panel and are never downloaded automatically; click an item there to send it to NDM. Only a direct navigation to a media URL is captured automatically.
 - **NDM protocol compatible** — talks to `ws://127.0.0.1:10007/download` with the `neatextension.v1` subprotocol. Sends cookies, referer, origin, content type, content disposition, size, POST body, and `X-*` headers.
@@ -73,7 +73,7 @@ When a page contains direct video or audio, a minimised pill appears at the bott
 
 The panel is intentionally conservative: encrypted/DRM streams, `blob:` URLs, `data:` URLs, and MSE-only streams cannot be downloaded by NDM and are not listed.
 
-NetEase webmail (126 / 163 / yeah.net) attachment URLs carry a one-time ticket: after the browser has requested one, NDM's replay only receives a `416` or an HTML error page, so the file ends up saved as `readdata.jsp`. The extension therefore leaves those links to the browser and shows a one-off notice on the page.
+Some servers encode the filename as an **RFC 2047** word (`Content-Disposition: attachment; filename="=?UTF-8?B?...?="`, common with NetEase and other webmail). NDM cannot decode it and falls back to the URL name, so the extension hands those downloads to the browser, which restores the original filename.
 
 ## Supported file types
 
@@ -134,9 +134,25 @@ No build step is required. Load the folder directly in Chrome.
 
 The release archive holds runtime files only. The script starts at `manifest.json` and follows HTML `<link>`/`<script>`/`<img>`, CSS `url()`, and ES module `import` references, then adds every locale and `LICENSE`; tests, scripts, and READMEs stay out. Use `node scripts/package.mjs --dry-run` to preview the file list or `--out <file.zip>` to change the destination. Timestamps are fixed, so identical sources produce an identical archive.
 
+### Web smoke test
+
+`npm run test:web` launches a real browser with a throwaway profile, loads the extension, and visits a list of popular Chinese sites that need no login, reporting anything the extension would hand to NDM:
+
+```bash
+npm run test:web                     # Chrome, 8 seconds per site
+npm run test:web -- --seconds 7      # adjust the per-site wait
+npm run test:web -- --browser edge   # use Edge
+npm run test:web -- --headed         # show the browser window
+npm run test:web -- --filter baidu   # run matching sites only
+```
+
+The extension talks to a fake NDM server started by the script: it only records the messages and never downloads anything, so your real NDM is untouched. Every site is verified to have actually loaded (resource count and title); sites that do not load are marked as skipped and excluded from the verdict.
+
 ### Versioning
 
-The extension version lives in `manifest.json` (`version`) and is mirrored in `package.json`; `npm run check` verifies they match. Bump the last component on every change (`0.1.9` → `0.1.10`) unless stated otherwise.
+The extension version lives in `manifest.json` (`version`) and is mirrored in `package.json`; `npm run check` verifies they match. Raise the third component on every change; when it reaches 10, it carries into the second (`0.1.9` → `0.2.0`, `0.2.9` → `0.3.0`).
+
+Packaging is not part of every change: run `npm run package` only when a release build is requested, so no stale archives pile up.
 
 ### Project layout
 

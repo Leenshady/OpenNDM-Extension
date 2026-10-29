@@ -305,27 +305,40 @@ test('rejects partial responses, blocked sites, bypass, and disabled capture', (
   assert.equal(decideCapture({ ...base, url: 'https://example.com/file.zip', contentType: 'application/zip', ndmConnected: false }).capture, false);
 });
 
-test('leaves one-time NetEase webmail attachments to the browser', () => {
-  const url = 'https://mail.126.com/js6/read/readdata.jsp?sid=x&mid=420:abc&part=3&mode=download&l=read&action=download_attach';
-  const result = decideCapture({
+test('leaves RFC 2047 encoded filenames to the browser', () => {
+  // 网易邮箱等用 RFC 2047 编码文件名，NDM 无法解码，只能按 URL 存成乱名。
+  // NetEase mail and others encode filenames as RFC 2047 words, which NDM cannot decode.
+  const encoded = decideCapture({
     ...base,
     type: 'main_frame',
-    url,
+    url: 'https://mail.example.com/read/readdata.jsp?sid=x&action=download_attach',
     contentType: 'application/pdf',
-    contentDisposition: 'attachment; filename="=?UTF8?B?5rWL6K+V?="',
+    contentDisposition: 'attachment; filename="=?UTF8?B?5rWL6K+V6YCa55+lLnBkZg==?="',
     contentLength: 20000
   });
-  assert.equal(result.capture, false);
-  assert.equal(result.reason, 'one-time-attachment');
+  assert.equal(encoded.capture, false);
+  assert.equal(encoded.reason, 'rfc2047-filename');
 
-  const preview = decideCapture({
+  // 普通文件名（含 filename*）照常接管 / Plain names, including filename*, are still captured.
+  const plain = decideCapture({
     ...base,
     type: 'main_frame',
-    url: 'https://preview.mail.126.com/download.do?uid=a&mid=b&part=3&filename=report.pdf',
+    url: 'https://mail.example.com/read/readdata.jsp?sid=x&action=download_attach',
     contentType: 'application/pdf',
+    contentDisposition: 'attachment; filename="report.pdf"',
     contentLength: 20000
   });
-  assert.equal(preview.capture, true);
+  assert.equal(plain.capture, true);
+
+  const encodedStar = decideCapture({
+    ...base,
+    type: 'main_frame',
+    url: 'https://example.com/download',
+    contentType: 'application/pdf',
+    contentDisposition: "attachment; filename*=UTF-8''report.pdf",
+    contentLength: 20000
+  });
+  assert.equal(encodedStar.capture, true);
 });
 
 test('ignores attachment responses from browser-native internal APIs', () => {
