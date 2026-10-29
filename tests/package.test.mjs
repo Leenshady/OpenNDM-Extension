@@ -37,7 +37,7 @@ test('collects only the files the extension needs at runtime', () => {
     assert.ok(files.includes(expected), `${expected} should ship`);
   }
 
-  for (const excluded of ['package.json', 'README.md', 'README.zh-CN.md', 'scripts/package.mjs', 'tests/rules.test.mjs']) {
+  for (const excluded of ['package.json', 'README.md', 'DEVELOPMENT.md', 'scripts/package.mjs', 'tests/rules.test.mjs']) {
     assert.ok(!files.includes(excluded), `${excluded} should not ship`);
   }
 

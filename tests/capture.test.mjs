@@ -270,6 +270,26 @@ test('does not forward RFC 2047 named downloads from the browser', async () => {
   assert.equal(canceledIds.includes(97), false);
 });
 
+test('ignores browser downloads that have no originating tab', async () => {
+  const before = sentMessages.length;
+  // 浏览器启动时恢复/续传的旧下载没有来源标签页 / Restored or resumed downloads have no tab.
+  events.downloadCreated[0]?.({
+    id: 99,
+    url: 'https://drivers.example.com/old-driver-2023.exe',
+    finalUrl: 'https://drivers.example.com/old-driver-2023.exe',
+    tabId: -1,
+    referrer: 'https://www.example.com/',
+    filename: 'C:\\Downloads\\old-driver-2023.exe',
+    mime: 'application/x-msdownload',
+    fileSize: 43616656,
+    totalBytes: 43616656
+  });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  assert.equal(sentMessages.length, before);
+  assert.equal(canceledIds.includes(99), false);
+});
+
 test('Ctrl bypass prevents a new capture', async () => {
   const before = sentMessages.length;
   await new Promise((resolve) => {

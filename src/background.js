@@ -956,6 +956,11 @@ async function onBrowserDownload(item) {
     if (!settings.captureEnabled || !settings.autoCancelBrowserDownload) return;
     if (!item || item.byExtensionId === chrome.runtime.id) return;
     if (!isHttpUrl(item.url)) return;
+    // 用户点出来的下载一定属于某个标签页；没有来源标签页的下载，通常是浏览器启动时
+    // 自动恢复/续传的旧任务（可能已过很久），不应再转给 NDM。
+    // A user-initiated download always belongs to a tab. Downloads without one are usually old
+    // tasks the browser restored or resumed at startup, so they must not be forwarded.
+    if (!Number.isInteger(item.tabId) || item.tabId < 0) return;
     // 重定向后才是真实文件地址 / The post-redirect URL is the real file address.
     const targetUrl = item.finalUrl || item.url;
     // 浏览器恢复下载时会重放旧的 DASH 分片（.m4s 等），这些签名早已过期，不要转给 NDM。

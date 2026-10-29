@@ -173,7 +173,7 @@ requireFile('src/popup/popup.css', 'UI');
 requireFile('src/options/options.css', 'UI');
 requireFile('LICENSE', 'license');
 requireFile('README.md', 'readme');
-requireFile('README.zh-CN.md', 'readme');
+requireFile('DEVELOPMENT.md', 'docs');
 
 if (warnings.length) {
   for (const warning of warnings) console.warn(`WARN ${warning}`);
