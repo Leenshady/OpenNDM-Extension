@@ -177,6 +177,12 @@ export function decideCapture(input = {}) {
   // capturing them either duplicates the download or grabs an app config bundle.
   if (type === 'xmlhttprequest') return deny('xhr-fetch');
 
+  // 其余响应只接受顶层导航。子框架、embed/object、worker 等请求可能是页面自己的资源，
+  // 宁可漏接，也不下载用户没有预期的链接。
+  // Everything below must be a top-level navigation. Subframes, embeds, and worker requests may be
+  // page assets; missing a capture is better than downloading something the user did not expect.
+  if (type !== 'main_frame') return deny('not-navigation');
+
   // 已知可下载扩展名 / Known downloadable extensions.
   if (AUTO_CAPTURE_EXTENSIONS.has(ext)) {
     if (rawLength === 0 && input.contentLength !== undefined && input.contentLength !== null) {
@@ -185,19 +191,14 @@ export function decideCapture(input = {}) {
     return allow('normal', 'supported-extension');
   }
 
-  // 强制下载 MIME：主文档、对象和较大的未知接口才接管 / Forced-download MIME types.
+  // 强制下载 MIME：顶层导航 / Forced-download MIME types reached by a navigation.
   if (FORCED_DOWNLOAD_MIMES.has(contentType)) {
-    if (type === 'main_frame' || type === 'object') return allow('normal', 'forced-download');
-    if (size >= SMALL_MEDIA_FALLBACK) return allow('normal', 'large-binary');
-    return deny('small-binary');
+    return allow('normal', 'forced-download');
   }
 
-  // 无扩展名的下载链接：只接受主文档或大型嵌入对象 / Extensionless URLs need page-level intent.
-  if (type === 'main_frame' && contentType && !contentType.startsWith('text/')) {
+  // 无扩展名的下载链接：只接受主文档 / Extensionless URLs need page-level intent.
+  if (contentType && !contentType.startsWith('text/')) {
     return allow('normal', 'main-frame-file');
-  }
-  if (type === 'object' && size >= SMALL_MEDIA_FALLBACK) {
-    return allow('normal', 'embedded-object');
   }
 
   return deny('not-download');

@@ -10,7 +10,8 @@ A clean **Manifest V3** rewrite of the Neat Download Manager browser extension. 
 - **Ctrl to skip** — hold **Ctrl** (or **⌘ Command** on macOS) while clicking a link; that download stays in Chrome. A small toast confirms the bypass.
 - **Block sites** — block the current site from the popup or the page context menu. Every download from that host and its subdomains bypasses NDM.
 - **Page media panel** — a modern Shadow DOM panel lists `<video>`, `<audio>`, `<source>`, `<embed>`, and `<object>` media, plus network media and Bilibili `__playinfo__` tracks (including MSE pages whose `<video>` uses `blob:`). Click an item to send it to NDM.
-- **Precise rules** — captures only clear download intent: top-level navigations, named `Content-Disposition` attachments, and browser download events. Page `fetch`/XHR calls, config bundles, streaming segments, player preview sprites (including Bilibili `videoshot`), and `.z` data files are left alone; media responses below the configurable threshold stay in the browser.
+- **Precise rules** — captures only clear download intent: top-level navigations, named `Content-Disposition` attachments, and browser download events. Page `fetch`/XHR calls, subframe/`object`/worker requests, config bundles, streaming segments, player preview sprites (including Bilibili `videoshot`), and `.z` data files are left alone; media responses below the configurable threshold stay in the browser.
+- **Better to miss than to over-capture** — a browser download event is re-checked against the same rules; anything uncertain, or already finished by the browser, stays with the browser. Missing one takeover is easy to redo; downloading an extra unintended file is not.
 - **Media stays in the panel** — ads, previews, and DASH tracks played by a page only appear in the bottom-right media panel and are never downloaded automatically; click an item there to send it to NDM. Only a direct navigation to a media URL is captured automatically.
 - **NDM protocol compatible** — talks to `ws://127.0.0.1:10007/download` with the `neatextension.v1` subprotocol. Sends cookies, referer, origin, content type, content disposition, size, POST body, and `X-*` headers.
 - **HLS aware** — `.m3u8` playlists are sent as `hls` tasks, while individual `.ts`/`.m4s` segments are ignored.
@@ -53,7 +54,7 @@ JavaScript-triggered downloads are handled through `chrome.downloads.onCreated` 
 
 Media produced by page playback (video, audio, HLS playlists) only fills the media panel and is never downloaded automatically, so opening a video site no longer spawns ad, danmaku, or segment downloads. Click the entry in the panel when you want it.
 
-Chrome can receive a filename from the page's `<a download>` attribute. Before handing a download to NDM, the extension waits a short grace window (~0.7 s): if Chrome has a better name while NDM could only use the URL or the server storage name, the browser copy is kept instead of adding a wrongly named NDM download. Redirected downloads use the final URL and its cookies.
+Downloads are decided and sent as soon as the response headers arrive, with no artificial delay; redirected downloads use the final URL and its cookies. The browser's own copy is cancelled as early as possible so no extra download entry is left behind.
 
 ### Skip one download
 
@@ -135,7 +136,7 @@ The release archive holds runtime files only. The script starts at `manifest.jso
 
 ### Versioning
 
-The extension version lives in `manifest.json` (`version`) and is mirrored in `package.json`; `npm run check` verifies they match. Bump the last component on every change (`0.1.6` → `0.1.7`) unless stated otherwise.
+The extension version lives in `manifest.json` (`version`) and is mirrored in `package.json`; `npm run check` verifies they match. Bump the last component on every change (`0.1.9` → `0.1.10`) unless stated otherwise.
 
 ### Project layout
 

@@ -69,10 +69,6 @@ const panelOpenTabs = new Set();
 const oneTimeNotices = new Map();
 // 浏览器恢复下载时可能重放的 DASH 分片扩展名 / DASH fragments a restored download may replay.
 const DASH_FRAGMENT_EXTENSIONS = /^(?:M4S|CMFV|CMFA|CMFT)$/;
-// 浏览器下载观察窗口：等待 Chrome 给出最终文件名 / Grace window while Chrome determines the filename.
-const BROWSER_DOWNLOAD_GRACE_MS = 700;
-// 浏览器下载事件记录：URL -> { id, filename, at } / Browser download records by URL.
-const browserDownloads = new Map();
 const tabInfo = new Map();
 
 let settings = { ...DEFAULT_SETTINGS };
@@ -768,7 +764,6 @@ function pruneRequestContexts() {
  */
 async function processHeaders(snapshot) {
   const context = requestContexts.get(snapshot.requestId) || {};
-  const captureStartedAt = Date.now();
   try {
     await ensureInit();
     if (!settings.captureEnabled) return;
@@ -892,17 +887,6 @@ async function processHeaders(snapshot) {
         postData: context.bodyText || ''
       });
 
-      // 浏览器下载会带来页面提供的文件名（如 <a download>）。等一个短窗口：
-      // 若 Chrome 的名字与 NDM 会用的名字不同，就保留浏览器副本，不再让 NDM 存成哈希名。
-      // Chrome's copy may carry a page-provided filename (<a download>). If it differs from the
-      // name NDM would use, keep the browser copy instead of a second, wrongly named download.
-      if (settings.autoCancelBrowserDownload && decision.kind === 'normal') {
-        const browserCopy = await waitForBrowserDownload(snapshot.url, captureStartedAt, BROWSER_DOWNLOAD_GRACE_MS);
-        if (browserCopy?.filename && !sameFileName(browserCopy.filename, payload.filename)) {
-          return false;
-        }
-      }
-
       return sendToNdm(payload, { expectBrowserDownload: true, waitMs: 0, tab });
     })();
 
@@ -978,58 +962,8 @@ function pruneExpiring(map, limit) {
 /* -------------------------------------------------------------------------- */
 
 chrome.downloads.onCreated.addListener((item) => {
-  rememberBrowserDownload(item);
   void onBrowserDownload(item);
 });
-
-// Chrome 在下载开始前确定最终文件名，比 onCreated 更准确（例如 <a download> 的名字）。
-// Chrome fixes the final filename before the transfer starts; this is more accurate than onCreated.
-chrome.downloads.onDeterminingFilename?.addListener((item) => {
-  rememberBrowserDownload(item);
-});
-
-/**
- * 记录浏览器下载最终选定的文件名，供捕获路径比对。
- * Remember the filename the browser settled on so the capture path can compare it.
- */
-function rememberBrowserDownload(item) {
-  if (!item || item.byExtensionId === chrome.runtime.id) return;
-  const filename = String(item.filename || '').split(/[\\/]/).pop() || '';
-  const at = Date.now();
-  for (const url of [item.url, item.finalUrl]) {
-    if (!url || !isHttpUrl(url)) continue;
-    browserDownloads.set(url, { id: item.id, filename, at });
-  }
-  const cutoff = at - 30_000;
-  for (const [url, entry] of browserDownloads) {
-    if (!entry || entry.at < cutoff) browserDownloads.delete(url);
-  }
-}
-
-/**
- * 在观察窗口内等待同一 URL 的浏览器下载，超时返回 null。
- * Wait for a browser download of the same URL inside the grace window; null on timeout.
- */
-async function waitForBrowserDownload(url, since, ms) {
-  const deadline = Date.now() + ms;
-  for (;;) {
-    const entry = browserDownloads.get(url);
-    if (entry && entry.id !== undefined && entry.at >= since - 1000) return entry;
-    if (Date.now() >= deadline) return null;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-}
-
-// 比较 Chrome 与 NDM 会使用的文件名，忽略 Chrome 的重名后缀。
-// Compare filenames, ignoring Chrome's duplicate-name suffix.
-function sameFileName(a, b) {
-  return normalizeFileName(a) === normalizeFileName(b);
-}
-
-function normalizeFileName(value) {
-  const name = String(value || '').split(/[\\/]/).pop() || '';
-  return name.replace(/\s*\(\d+\)(?=\.[^.]+$|$)/, '').trim().toLowerCase();
-}
 
 /**
  * 接管浏览器原生下载：已由 webRequest 捕获的直接取消，否则补发一次。
@@ -1049,6 +983,9 @@ async function onBrowserDownload(item) {
       || DASH_FRAGMENT_EXTENSIONS.test(extensionOf(targetUrl))) {
       return;
     }
+    // 一次性邮件附件由浏览器完成，兜底路径同样不能转给 NDM。
+    // One-time mail attachments stay in the browser; the fallback must not forward them either.
+    if (isNetEaseAttachmentUrl(targetUrl)) return;
     if (isBypassed()) return;
 
     const tab = item.tabId >= 0 ? await getTabInfo(item.tabId) : null;
@@ -1096,7 +1033,8 @@ async function onBrowserDownload(item) {
         cancelDownload(item.id);
         return;
       }
-      return;
+      // 头部路径没有接管：继续用同一套规则复核这次浏览器下载。
+      // The header path did not take it over; fall through and validate this browser download.
     }
 
     const contentType = normalizeMime(item.mime || '');
@@ -1106,6 +1044,27 @@ async function onBrowserDownload(item) {
     const localName = item.filename ? safeFilename(String(item.filename).split(/[\\/]/).pop()) : '';
     const filename = localName || filenameFrom(targetUrl, '');
     const size = Math.max(0, Number(item.fileSize) || Number(item.totalBytes) || 0);
+
+    // 浏览器已经确认这是一次下载，但仍用同一套规则复核，避免把配置包、数据文件等再下一遍。
+    // Chrome confirmed a download, but the same rules still apply so config bundles and data files
+    // are never downloaded a second time.
+    const decision = decideCapture({
+      url: targetUrl,
+      method: 'GET',
+      type: 'main_frame',
+      statusCode: 200,
+      contentType,
+      contentDisposition: '',
+      contentLength: size > 0 ? size : undefined,
+      captureEnabled: settings.captureEnabled,
+      captureMedia: settings.captureMedia,
+      mediaMinSize: settings.mediaMinSize,
+      ndmConnected: ndm.getState().connected,
+      blocked: false,
+      bypass: false
+    });
+    if (!decision.capture) return;
+
     const cookies = await getCookieHeader(targetUrl, tab?.url || pageUrl);
     const title = tab?.title || hostnameOf(pageUrl) || hostnameOf(targetUrl);
     const description = describeCapture({ kind, ext, size, contentType });

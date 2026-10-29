@@ -144,10 +144,14 @@ function fireRequest({ requestId, url, type = 'main_frame', statusCode = 200, co
 test('captures a ZIP response and cancels the duplicate browser download', async () => {
   assert.equal(FakeWebSocket.instances.length > 0, true);
   fireRequest({ requestId: 'r1', url: 'https://example.com/file.zip' });
-  await new Promise((resolve) => setTimeout(resolve, 120));
+  await new Promise((resolve) => setTimeout(resolve, 200));
 
-  // 观察窗口内出现浏览器下载且名字一致 → 发送 NDM 并取消浏览器副本。
-  // A browser download with the same name arrives inside the grace window → send and cancel it.
+  const captured = sentMessages.find((message) => message.includes('2:https://example.com/file.zip'));
+  assert.ok(captured);
+  assert.match(captured, /\r\n6:normal\r\n/);
+  assert.match(captured, /\r\n7:4096\r\n/);
+  assert.match(captured, /\r\n8:application\/zip\r\n/);
+
   events.downloadCreated[0]?.({
     id: 91,
     url: 'https://example.com/file.zip',
@@ -160,39 +164,32 @@ test('captures a ZIP response and cancels the duplicate browser download', async
     fileSize: 4096,
     totalBytes: 4096
   });
-  await new Promise((resolve) => setTimeout(resolve, 1200));
-
-  const captured = sentMessages.find((message) => message.includes('2:https://example.com/file.zip'));
-  assert.ok(captured);
-  assert.match(captured, /\r\n6:normal\r\n/);
-  assert.match(captured, /\r\n7:4096\r\n/);
-  assert.match(captured, /\r\n8:application\/zip\r\n/);
+  await new Promise((resolve) => setTimeout(resolve, 120));
   assert.deepEqual(canceledIds, [91]);
 });
 
-test('keeps Chrome\'s copy when it has a better filename', async () => {
+test('captures a download Chrome confirmed after inconclusive headers', async () => {
   const before = sentMessages.length;
-  const url = 'https://example.com/hash-6f2a1c9d.zip';
-  fireRequest({ requestId: 'r6', url, contentType: 'application/zip', contentLength: '4096' });
+  const url = 'https://example.com/download/42';
+  // 头部阶段无法判断（type=other），由浏览器下载事件确认后再复核规则。
+  // Headers alone are inconclusive (type=other); the browser download event confirms it.
+  fireRequest({ requestId: 'r8', type: 'other', url, contentType: 'application/zip', contentLength: '4096' });
   await new Promise((resolve) => setTimeout(resolve, 120));
-
-  // 页面用 <a download> 给了友好名，NDM 只会存 hash-6f2a1c9d.zip → 保留浏览器副本。
-  // The page supplied a friendly name via <a download>; NDM would keep the hash name.
   events.downloadCreated[0]?.({
-    id: 95,
+    id: 98,
     url,
     finalUrl: url,
     tabId: tab.id,
     referrer: 'https://example.com/page',
-    filename: 'C:\\Downloads\\驱动安装包.zip',
+    filename: 'C:\\Downloads\\report.zip',
     mime: 'application/zip',
     fileSize: 4096,
     totalBytes: 4096
   });
-  await new Promise((resolve) => setTimeout(resolve, 1200));
+  await new Promise((resolve) => setTimeout(resolve, 1300));
 
-  assert.equal(sentMessages.length, before);
-  assert.equal(canceledIds.includes(95), false);
+  assert.ok(String(sentMessages[before]).includes('2:https://example.com/download/42'));
+  assert.ok(canceledIds.includes(98));
 });
 
 test('sends the post-redirect URL for browser downloads', async () => {
@@ -239,6 +236,27 @@ test('still sends media opened directly as a navigation', async () => {
   await new Promise((resolve) => setTimeout(resolve, 220));
   assert.equal(sentMessages.length, before + 1);
   assert.ok(String(sentMessages[before]).includes('https://cdn.example.com/movie.mp4'));
+});
+
+test('does not forward one-time mail attachments from browser downloads', async () => {
+  const before = sentMessages.length;
+  const url = 'https://mail.126.com/js6/read/readdata.jsp?sid=x&mid=420:abc&part=4&mode=download&l=read&action=download_attach';
+  // 头部捕获已拒绝这类链接，兜底路径也不能补发 / The header path denies these; the fallback must not resend.
+  events.downloadCreated[0]?.({
+    id: 97,
+    url,
+    finalUrl: url,
+    tabId: tab.id,
+    referrer: 'https://mail.126.com/js6/main.jsp?sid=x',
+    filename: 'C:\\Downloads\\readdata.html',
+    mime: 'text/html',
+    fileSize: 20242,
+    totalBytes: 20242
+  });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  assert.equal(sentMessages.length, before);
+  assert.equal(canceledIds.includes(97), false);
 });
 
 test('Ctrl bypass prevents a new capture', async () => {

@@ -239,9 +239,10 @@ test('handles octet-stream conservatively', () => {
   const large = decideCapture({ ...base, url: 'https://example.com/api/blob', contentType: 'application/octet-stream', contentLength: 2 * 1024 * 1024 });
   assert.equal(large.capture, false);
   assert.equal(large.reason, 'xhr-fetch');
-  // 非 XHR 的大二进制仍然接管 / Large non-XHR binaries are still captured.
+  // 非导航的非 XHR 大二进制也不接管 / Non-navigation binaries stay in the browser too.
   const other = decideCapture({ ...base, type: 'other', url: 'https://example.com/api/blob', contentType: 'application/octet-stream', contentLength: 2 * 1024 * 1024 });
-  assert.equal(other.capture, true);
+  assert.equal(other.capture, false);
+  assert.equal(other.reason, 'not-navigation');
   const mainFrame = decideCapture({ ...base, type: 'main_frame', url: 'https://example.com/download/42', contentType: 'application/octet-stream' });
   assert.equal(mainFrame.capture, true);
 });
