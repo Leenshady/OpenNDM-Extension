@@ -376,7 +376,10 @@ async function manualDownload(options) {
   const sent = await sendToNdm(payload, {
     expectBrowserDownload: false,
     waitMs: Number(options.waitMs) || 1800,
-    tab
+    tab,
+    source: 'manual',
+    tabId: Number.isInteger(options.tabId) ? options.tabId : null,
+    resourceType: 'manual'
   });
 
   return sent
@@ -426,11 +429,76 @@ function createPayload({
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/* Capture diagnostics                                                        */
+/* -------------------------------------------------------------------------- */
+
+// 每次接管都会记下来源与标签页信息，便于定位“关闭浏览器时冒下载”这类问题。
+// Record the origin and tab of every capture so incidents such as "downloads fired while
+// closing the browser" can be diagnosed instead of guessed.
+const CAPTURE_LOG_KEY = 'captureLog';
+const CAPTURE_LOG_LIMIT = 60;
+
+let captureLog = [];
+let captureLogReady = null;
+
+async function ensureCaptureLog() {
+  if (!captureLogReady) {
+    captureLogReady = (async () => {
+      try {
+        const stored = await chrome.storage.local.get(CAPTURE_LOG_KEY);
+        captureLog = Array.isArray(stored[CAPTURE_LOG_KEY])
+          ? stored[CAPTURE_LOG_KEY].slice(-CAPTURE_LOG_LIMIT)
+          : [];
+      } catch {
+        captureLog = [];
+      }
+    })();
+  }
+  await captureLogReady;
+}
+
+function logCapture(entry) {
+  void (async () => {
+    await ensureCaptureLog();
+    const record = { t: new Date().toISOString(), ...entry };
+    captureLog.push(record);
+    if (captureLog.length > CAPTURE_LOG_LIMIT) captureLog = captureLog.slice(-CAPTURE_LOG_LIMIT);
+    try {
+      console.info('[OpenNDM] capture', record);
+    } catch {
+      // 控制台不可用时忽略 / Ignore when the console is unavailable.
+    }
+    try {
+      await chrome.storage.local.set({ [CAPTURE_LOG_KEY]: captureLog });
+    } catch {
+      // 存储失败不影响捕获 / A storage failure must not affect capture.
+    }
+  })();
+}
+
+async function clearCaptureLog() {
+  await ensureCaptureLog();
+  captureLog = [];
+  try {
+    await chrome.storage.local.remove(CAPTURE_LOG_KEY);
+  } catch {
+    // 忽略 / Ignore.
+  }
+}
+
 /**
  * 发送并记录最近捕获；仅在成功时登记浏览器下载取消。
  * Send, record the capture, and register browser-download cancellation only on success.
  */
-async function sendToNdm(payload, { expectBrowserDownload = false, waitMs = 0, tab = null } = {}) {
+async function sendToNdm(payload, {
+  expectBrowserDownload = false,
+  waitMs = 0,
+  tab = null,
+  source = '',
+  tabId = null,
+  resourceType = ''
+} = {}) {
   if (!payload || !payload.url) return false;
   const url = payload.url;
   const sent = await ndm.send(payload, { waitMs });
@@ -443,8 +511,24 @@ async function sendToNdm(payload, { expectBrowserDownload = false, waitMs = 0, t
   pruneExpiring(recentSent, LIMITS.recentSent);
   if (expectBrowserDownload && settings.autoCancelBrowserDownload) {
     pendingCancel.set(url, Date.now() + 15_000);
+    // 浏览器下载项的 URL 经常是“页面地址”，重定向后才变成文件地址；两个都标记才能取消副本。
+    // A download item often carries the page URL and only redirects to the file, so mark both.
+    if (payload.pageUrl && payload.pageUrl !== url && isHttpUrl(payload.pageUrl)) {
+      pendingCancel.set(payload.pageUrl, Date.now() + 15_000);
+    }
     pruneExpiring(pendingCancel, LIMITS.pendingCancel);
   }
+
+  logCapture({
+    source: source || 'unknown',
+    tabId: Number.isInteger(tabId) ? tabId : null,
+    type: resourceType || '',
+    url,
+    kind: payload.type || 'normal',
+    size: Math.floor(Number(payload.size) || 0),
+    referrer: payload.referer || '',
+    pageUrl: payload.pageUrl || ''
+  });
 
   addRecent({
     url,
@@ -872,7 +956,14 @@ async function processHeaders(snapshot) {
         postData: context.bodyText || ''
       });
 
-      return sendToNdm(payload, { expectBrowserDownload: true, waitMs: 0, tab });
+      return sendToNdm(payload, {
+        expectBrowserDownload: true,
+        waitMs: 0,
+        tab,
+        source: 'headers',
+        tabId: snapshot.tabId,
+        resourceType: snapshot.type
+      });
     })();
 
     inflightCaptures.set(snapshot.url, task);
@@ -956,11 +1047,6 @@ async function onBrowserDownload(item) {
     if (!settings.captureEnabled || !settings.autoCancelBrowserDownload) return;
     if (!item || item.byExtensionId === chrome.runtime.id) return;
     if (!isHttpUrl(item.url)) return;
-    // 用户点出来的下载一定属于某个标签页；没有来源标签页的下载，通常是浏览器启动时
-    // 自动恢复/续传的旧任务（可能已过很久），不应再转给 NDM。
-    // A user-initiated download always belongs to a tab. Downloads without one are usually old
-    // tasks the browser restored or resumed at startup, so they must not be forwarded.
-    if (!Number.isInteger(item.tabId) || item.tabId < 0) return;
     // 重定向后才是真实文件地址 / The post-redirect URL is the real file address.
     const targetUrl = item.finalUrl || item.url;
     // 浏览器恢复下载时会重放旧的 DASH 分片（.m4s 等），这些签名早已过期，不要转给 NDM。
@@ -974,12 +1060,10 @@ async function onBrowserDownload(item) {
     if (isBrowserOnly(item.url) || isBrowserOnly(targetUrl)) return;
     if (isBypassed()) return;
 
-    const tab = item.tabId >= 0 ? await getTabInfo(item.tabId) : null;
-    const pageUrl = stripHash(item.referrer || tab?.url || '');
-    if (isRequestBlocked({ url: item.url, initiator: pageUrl, tabUrl: tab?.url, rules: blockedSites })) {
-      return;
-    }
-
+    // 只要这次下载已经交给 NDM，就必须取消浏览器副本——即使它没有来源标签页。
+    // 漏掉取消就会变成“NDM 一份 + 浏览器一份”的重复下载。
+    // Cancel the browser copy as soon as this download was already sent to NDM, even when it has
+    // no tab; a missed cancel leaves one copy in NDM and another in the browser.
     const directPending = pendingCancel.get(item.url) || pendingCancel.get(item.finalUrl);
     if (directPending && directPending > Date.now()) {
       cancelDownload(item.id);
@@ -998,6 +1082,25 @@ async function onBrowserDownload(item) {
       return;
     }
     if (!ndm.getState().connected) return;
+
+    // 既没有来源标签页、也没有交给过 NDM：通常是浏览器启动时恢复/续传的旧任务，不发送。
+    // No tab and nothing sent yet: usually an old task the browser restored at startup.
+    if (!Number.isInteger(item.tabId) || item.tabId < 0) {
+      logCapture({
+        source: 'fallback',
+        skipped: 'no-tab',
+        tabId: item.tabId ?? null,
+        url: item.url,
+        referrer: item.referrer || ''
+      });
+      return;
+    }
+
+    const tab = await getTabInfo(item.tabId);
+    const pageUrl = stripHash(item.referrer || tab?.url || '');
+    if (isRequestBlocked({ url: item.url, initiator: pageUrl, tabUrl: tab?.url, rules: blockedSites })) {
+      return;
+    }
 
     // webRequest 已看到该响应时，给异步捕获一个短暂窗口，避免重复发送。
     // If webRequest already saw this response, give the async capture a short window.
@@ -1070,7 +1173,14 @@ async function onBrowserDownload(item) {
       postData: ''
     });
 
-    const sent = await sendToNdm(payload, { expectBrowserDownload: false, waitMs: 1200, tab });
+    const sent = await sendToNdm(payload, {
+      expectBrowserDownload: false,
+      waitMs: 1200,
+      tab,
+      source: 'fallback',
+      tabId: item.tabId,
+      resourceType: 'download'
+    });
     if (sent) cancelDownload(item.id);
   } catch (error) {
     console.warn('[OpenNDM] browser download fallback failed', error);
@@ -1417,6 +1527,16 @@ async function handleMessage(message, sender) {
       recentCaptures = [];
       await saveSessionState({ recentCaptures });
       scheduleBroadcast();
+      return { ok: true };
+    }
+
+    case MSG.GET_CAPTURE_LOG: {
+      await ensureCaptureLog();
+      return { ok: true, log: captureLog };
+    }
+
+    case MSG.CLEAR_CAPTURE_LOG: {
+      await clearCaptureLog();
       return { ok: true };
     }
 

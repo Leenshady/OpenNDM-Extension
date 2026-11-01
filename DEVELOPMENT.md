@@ -107,17 +107,19 @@ content script ── MEDIA_FOUND ─► mediaByTab ──► 面板渲染（点
 
 1. `byExtensionId === chrome.runtime.id`（自己发起）。
 2. 非 `http(s)`。
-3. **`tabId < 0` 或非整数**：浏览器启动时恢复/续传的旧任务，不接管。
-4. URL 或 `finalUrl` 是 DASH 分片（`M4S/CMFV/CMFA/CMFT`）。
-5. `browserOnlyUrls` 命中（RFC 2047 文件名）。
-6. Ctrl 绕过窗口内。
-7. 站点被屏蔽。
-8. `pendingCancel` / `inflightCaptures` / `recentSent` 命中：已在网络路径处理，直接取消浏览器副本。
-9. `seenHeaderUrls` 命中：等最多 600 ms 让网络路径完成；若期间 `pendingCancel` 出现则取消并返回。
-10. 用 `decideCapture({ type: 'main_frame', ... })` **复核**；不通过则放弃。
-11. `targetUrl = item.finalUrl || item.url` → 发送 → 取消浏览器下载并 `chrome.downloads.erase()`。
+3. URL 或 `finalUrl` 是 DASH 分片（`M4S/CMFV/CMFA/CMFT`）。
+4. `browserOnlyUrls` 命中（RFC 2047 文件名）。
+5. Ctrl 绕过窗口内。
+6. `pendingCancel` / `inflightCaptures` / `recentSent` 命中：已在网络路径发送过，**无论有没有来源标签页**都取消浏览器副本并返回。
+7. NDM 未连接 → 返回。
+8. **`tabId < 0` 或非整数**：既没来源标签页、也没发送过，属于浏览器启动时恢复/续传的旧任务，不发送。
+9. 站点被屏蔽。
+10. `seenHeaderUrls` 命中：等最多 600 ms 让网络路径完成；若期间 `pendingCancel` 出现则取消并返回。
+11. 用 `decideCapture({ type: 'main_frame', ... })` **复核**；不通过则放弃。
+12. `targetUrl = item.finalUrl || item.url` → 发送 → 取消浏览器下载并 `chrome.downloads.erase()`。
 
-> 第 10 步是关键：浏览器下载事件本身不是「用户意图」的证据，必须再走一遍规则。
+> 第 11 步是关键：浏览器下载事件本身不是「用户意图」的证据，必须再走一遍规则。
+> 第 6 步同样关键：取消动作只取决于「是否已交给 NDM」，与标签页无关；漏取消就会同时留下 NDM 与浏览器两份文件。
 
 ### 4.3 手动路径
 
@@ -349,6 +351,7 @@ npm run test:web -- --seconds 7 --browser edge --headed --filter 知乎
 - Service Worker 日志：`chrome://extensions` → 本扩展 → **Service Worker**。
 - 内容脚本日志：页面 DevTools Console（面板相关）。
 - NDM 侧日志：`%APPDATA%\NeatDM\<id>\LogFile.txt`；数据库 `%APPDATA%\NeatDM\NeatDB.db`（只读排查用）。
+- 捕获诊断：设置页 → **诊断 → 复制捕获日志**，或 Service Worker 控制台里的 `[OpenNDM] capture` 行。每条记录包含 `source`（`headers` / `fallback` / `manual`）、`tabId`、资源类型、`referrer`、`pageUrl`，保存在 `chrome.storage.local` 的 `captureLog`（环形 60 条，写入失败不影响捕获）。
 - 常见拒绝原因与含义见第 5 节表格；`not-download` 通常表示规则未识别，可用右键 **使用 NDM 下载** 验证是否为真实文件。
 
 ---
@@ -464,17 +467,19 @@ Checked in order; the first hit returns:
 
 1. `byExtensionId === chrome.runtime.id` (started by us).
 2. Not `http(s)`.
-3. **`tabId < 0` or not an integer**: downloads the browser restored or resumed at startup; never taken over.
-4. URL or `finalUrl` is a DASH fragment (`M4S/CMFV/CMFA/CMFT`).
-5. `browserOnlyUrls` hit (RFC 2047 filename).
-6. Inside the Ctrl bypass window.
-7. Site blocked.
-8. `pendingCancel` / `inflightCaptures` / `recentSent` hit: already handled by the network path, so cancel the browser copy.
-9. `seenHeaderUrls` hit: wait up to 600 ms for the network path; if `pendingCancel` appears meanwhile, cancel and return.
-10. Re-check with `decideCapture({ type: 'main_frame', ... })`; if it does not pass, give up.
-11. `targetUrl = item.finalUrl || item.url` → send → cancel the browser download and `chrome.downloads.erase()` it.
+3. URL or `finalUrl` is a DASH fragment (`M4S/CMFV/CMFA/CMFT`).
+4. `browserOnlyUrls` hit (RFC 2047 filename).
+5. Inside the Ctrl bypass window.
+6. `pendingCancel` / `inflightCaptures` / `recentSent` hit: already sent by the network path, so cancel the browser copy **even when it has no tab** and return.
+7. NDM not connected → return.
+8. **`tabId < 0` or not an integer**: no tab and nothing sent, so this is an old task the browser restored or resumed; do not forward it.
+9. Site blocked.
+10. `seenHeaderUrls` hit: wait up to 600 ms for the network path; if `pendingCancel` appears meanwhile, cancel and return.
+11. Re-check with `decideCapture({ type: 'main_frame', ... })`; if it does not pass, give up.
+12. `targetUrl = item.finalUrl || item.url` → send → cancel the browser download and `chrome.downloads.erase()` it.
 
-> Step 10 matters: a browser download event is not proof of user intent and must pass the same rules.
+> Step 11 matters: a browser download event is not proof of user intent and must pass the same rules.
+> Step 6 matters just as much: cancellation depends only on "was this already sent to NDM", not on having a tab; a missed cancel leaves one copy in NDM and another in the browser.
 
 ### 4.3 Manual path
 
@@ -684,6 +689,7 @@ npm run test:web -- --seconds 7 --browser edge --headed --filter 知乎
 - Service worker logs: `chrome://extensions` → this extension → **Service Worker**.
 - Content script logs: page DevTools console (panel-related).
 - NDM side: `%APPDATA%\NeatDM\<id>\LogFile.txt`; database `%APPDATA%\NeatDM\NeatDB.db` (read-only diagnostics).
+- Capture diagnostics: settings page → **Diagnostics → Copy capture log**, or the `[OpenNDM] capture` lines in the service worker console. Each entry records `source` (`headers` / `fallback` / `manual`), `tabId`, resource type, `referrer`, and `pageUrl`, kept in `chrome.storage.local` under `captureLog` (ring buffer of 60; a write failure never affects capture).
 - Rejection reasons are listed in section 5; `not-download` usually means the rules did not recognise the file — use **Download with NDM** from the context menu to confirm it is a real file.
 
 ## 16. Trade-offs

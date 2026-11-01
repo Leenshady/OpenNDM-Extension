@@ -128,6 +128,19 @@
   "resetSettings": { "message": "Reset settings" },
   "resetConfirm": { "message": "Reset all settings to their defaults?" },
 
+  "sectionDiagnostics": { "message": "Diagnostics" },
+  "diagnosticsDesc": {
+    "message": "Recent captures and where each one came from, useful when reporting a problem."
+  },
+  "diagnosticsHint": { "message": "The log is stored locally and never leaves this device." },
+  "copyCaptureLog": { "message": "Copy capture log" },
+  "clearCaptureLog": { "message": "Clear capture log" },
+  "captureLogCopied": { "message": "Capture log copied." },
+  "captureLogCopyFailed": { "message": "Copy failed; check the service worker console instead." },
+  "captureLogEmpty": { "message": "No captures recorded yet." },
+  "captureLogCleared": { "message": "Capture log cleared." },
+  "captureLogClearConfirm": { "message": "Clear the capture log?" },
+
   "saveFailed": { "message": "Could not save settings." },
   "settingsSaved": { "message": "Settings saved." },
   "testingConnection": { "message": "Testing…" },

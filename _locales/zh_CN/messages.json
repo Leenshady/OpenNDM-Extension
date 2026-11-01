@@ -128,6 +128,17 @@
   "resetSettings": { "message": "恢复默认设置" },
   "resetConfirm": { "message": "确定要将所有设置恢复为默认值吗？" },
 
+  "sectionDiagnostics": { "message": "诊断" },
+  "diagnosticsDesc": { "message": "最近的捕获记录及其来源，反馈问题时很有用。" },
+  "diagnosticsHint": { "message": "日志只保存在本机，不会上传到任何地方。" },
+  "copyCaptureLog": { "message": "复制捕获日志" },
+  "clearCaptureLog": { "message": "清空捕获日志" },
+  "captureLogCopied": { "message": "已复制捕获日志。" },
+  "captureLogCopyFailed": { "message": "复制失败，请改看 Service Worker 控制台。" },
+  "captureLogEmpty": { "message": "还没有捕获记录。" },
+  "captureLogCleared": { "message": "已清空捕获日志。" },
+  "captureLogClearConfirm": { "message": "确定清空捕获日志？" },
+
   "saveFailed": { "message": "保存设置失败。" },
   "settingsSaved": { "message": "设置已保存。" },
   "testingConnection": { "message": "测试中…" },

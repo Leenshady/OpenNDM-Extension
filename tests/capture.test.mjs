@@ -194,6 +194,49 @@ test('captures a download Chrome confirmed after inconclusive headers', async ()
   assert.ok(canceledIds.includes(98));
 });
 
+test('records where each capture came from', async () => {
+  const url = 'https://example.com/diagnostics.zip';
+  fireRequest({ requestId: 'rd', url });
+  await new Promise((resolve) => setTimeout(resolve, 250));
+
+  const response = await new Promise((resolve) => {
+    messageListener({ type: 'GET_CAPTURE_LOG' }, {}, resolve);
+  });
+  assert.equal(response?.ok, true);
+  const entry = response.log.find((item) => item.url === url);
+  assert.ok(entry, 'capture should be logged');
+  assert.equal(entry.source, 'headers');
+  assert.equal(entry.type, 'main_frame');
+  assert.equal(entry.tabId, tab.id);
+  assert.equal(entry.skipped, undefined);
+});
+
+test('cancels a tab-less browser copy reported under the page URL', async () => {
+  const before = sentMessages.length;
+  const file = 'https://example.com/download/file.zip';
+  // 蓝奏云这类站点：下载项先以页面地址出现，重定向后才是文件地址，而且没有来源标签页。
+  // Lanzou-style sites expose the download item under the page URL, with no tab, before the redirect.
+  fireRequest({ requestId: 'rp', url: file });
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(sentMessages.length, before + 1);
+
+  events.downloadCreated[0]?.({
+    id: 77,
+    url: tab.url,
+    finalUrl: file,
+    tabId: -1,
+    referrer: '',
+    filename: 'C:\\Downloads\\file.zip',
+    mime: 'application/zip',
+    fileSize: 4096,
+    totalBytes: 4096
+  });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  assert.ok(canceledIds.includes(77), 'browser copy should be cancelled');
+  assert.equal(sentMessages.length, before + 1, 'no second send');
+});
+
 test('sends the post-redirect URL for browser downloads', async () => {
   const before = sentMessages.length;
   events.downloadCreated[0]?.({

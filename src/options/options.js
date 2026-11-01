@@ -16,7 +16,9 @@
     SET_SETTINGS: 'SET_SETTINGS',
     SET_SITE_BLOCKED: 'SET_SITE_BLOCKED',
     REMOVE_BLOCKED_SITE: 'REMOVE_BLOCKED_SITE',
-    TEST_CONNECTION: 'TEST_CONNECTION'
+    TEST_CONNECTION: 'TEST_CONNECTION',
+    GET_CAPTURE_LOG: 'GET_CAPTURE_LOG',
+    CLEAR_CAPTURE_LOG: 'CLEAR_CAPTURE_LOG'
   };
 
   const DEFAULT_PATCH = {
@@ -290,6 +292,29 @@
     if (!confirm(t('resetConfirm', 'Reset all settings to their defaults?'))) return;
     await savePatch(DEFAULT_PATCH);
     setTimeout(() => void testConnection(), 300);
+  });
+
+  // 复制捕获日志，便于把“关闭浏览器时冒下载”这类问题发回排查。
+  // Copy the capture log so close-time incidents can be reported with evidence.
+  $('copyLogBtn').addEventListener('click', async () => {
+    const response = await send({ type: MSG.GET_CAPTURE_LOG });
+    const log = Array.isArray(response?.log) ? response.log : [];
+    if (!log.length) {
+      showToast(t('captureLogEmpty', 'No captures recorded yet.'));
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(log, null, 2));
+      showToast(t('captureLogCopied', 'Capture log copied.'));
+    } catch {
+      showToast(t('captureLogCopyFailed', 'Copy failed; check the service worker console instead.'));
+    }
+  });
+
+  $('clearLogBtn').addEventListener('click', async () => {
+    if (!confirm(t('captureLogClearConfirm', 'Clear the capture log?'))) return;
+    await send({ type: MSG.CLEAR_CAPTURE_LOG });
+    showToast(t('captureLogCleared', 'Capture log cleared.'));
   });
 
   chrome.storage.onChanged.addListener((changes, area) => {
