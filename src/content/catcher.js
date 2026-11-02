@@ -131,8 +131,21 @@
     if (!(target instanceof Element)) return false;
     const anchor = target.closest('a[href]');
     if (!anchor) return false;
-    if (anchor.hasAttribute('download')) return true;
+    if (anchor.hasAttribute('download') && honoursDownloadAttribute(anchor.href)) return true;
     return DOWNLOAD_HINT_RE.test(anchor.href || '');
+  }
+
+  // 跨源链接上浏览器会忽略 download 属性，只剩一次普通导航，别谎称替用户做了什么。
+  // The browser ignores `download` on cross-origin links, leaving a plain navigation; do not
+  // claim the bypass did something it could not have done.
+  function honoursDownloadAttribute(href) {
+    try {
+      const url = new URL(href, location.href);
+      if (url.protocol === 'data:' || url.protocol === 'blob:') return true;
+      return url.origin === location.origin;
+    } catch {
+      return false;
+    }
   }
 
   /* ------------------------------------------------------------------------ */

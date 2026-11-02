@@ -10,6 +10,7 @@
  */
 
 import {
+  BROWSER_ONLY_REASONS,
   DEFAULT_SETTINGS,
   HLS_EXTENSIONS,
   HLS_MIMES,
@@ -563,8 +564,28 @@ async function handleNdmWaiting(payload) {
       redirect: 'follow',
       cache: 'no-store'
     });
-    if (!response.ok) return;
-    const size = Number(response.headers.get('content-length')) || 0;
+    if (!response.ok) {
+      // 签名过期或防盗链时 HEAD 会 403；保留 NDM 里的原任务，只把失败原因写进诊断日志。
+      // A signed or hotlink-protected URL can 403 on HEAD; keep the task and log the reason only.
+      logCapture({
+        source: 'waiting',
+        tabId: Number.isInteger(payload.tabId) ? payload.tabId : null,
+        type: 'head-probe',
+        url: payload.url,
+        kind: payload.type || 'normal',
+        size: 0,
+        referrer: payload.referer || '',
+        pageUrl: payload.pageUrl || '',
+        skipped: `head-status-${response.status}`
+      });
+      return;
+    }
+    // 探测响应同样可能是压缩的，此时 Content-Length 不是解压后大小，宁可不报。
+    // A probe response may be encoded too; then Content-Length is not the decoded size.
+    const encoding = String(response.headers.get('content-encoding') || '').trim().toLowerCase();
+    const size = encoding && encoding !== 'identity'
+      ? 0
+      : Number(response.headers.get('content-length')) || 0;
     const contentType = response.headers.get('content-type') || '';
     if (!size && !contentType) return;
     await ndm.send({
@@ -708,7 +729,7 @@ chrome.webRequest.onHeadersReceived.addListener(
         ? Number(getHeader(details.responseHeaders, 'content-length'))
         : undefined,
       contentRange: getHeader(details.responseHeaders, 'content-range'),
-      acceptRanges: getHeader(details.responseHeaders, 'accept-ranges')
+      contentEncoding: getHeader(details.responseHeaders, 'content-encoding')
     };
     // 快速排除图片、字体、HTML 等普通资源，减少页面开销。
     // Quickly skip ordinary assets to keep page overhead low.
@@ -785,6 +806,7 @@ function onBeforeRequest(details) {
     title: tab?.title || '',
     bodyText: body.text,
     bodyContentType: body.contentType,
+    bodyTooLarge: body.truncated === true,
     bodyForm,
     requestHeaders: null,
     createdAt: Date.now()
@@ -818,8 +840,11 @@ function onBeforeSendHeaders(details) {
   }
   if (context.bodyForm) {
     const body = serializeRequestBody({ formData: context.bodyForm }, context.bodyContentType);
+    // 超限的请求体只留标记，不再重放；类型仍要保留给 NDM。
+    // Over the cap only the flag survives; the request Content-Type is still needed.
+    context.bodyTooLarge = body.truncated === true;
     context.bodyText = body.text;
-    context.bodyContentType = body.contentType;
+    context.bodyContentType = body.contentType || context.bodyContentType;
     context.bodyForm = null;
   }
 }
@@ -874,6 +899,8 @@ async function processHeaders(snapshot) {
       contentDisposition: snapshot.contentDisposition,
       contentLength: snapshot.contentLength,
       contentRange: snapshot.contentRange,
+      contentEncoding: snapshot.contentEncoding,
+      postBodyTooLarge: context.bodyTooLarge === true,
       captureEnabled: settings.captureEnabled,
       captureMedia: settings.captureMedia,
       mediaMinSize: settings.mediaMinSize,
@@ -883,10 +910,11 @@ async function processHeaders(snapshot) {
     });
 
     if (!decision.capture) {
-      // RFC 2047 文件名交给浏览器：记住这个 URL，浏览器下载事件出现时也不要再转给 NDM。
-      // RFC 2047 names stay in the browser; remember the URL so the download event is not forwarded.
-      if (decision.reason === 'rfc2047-filename') {
-        browserOnlyUrls.set(snapshot.url, Date.now() + 15_000);
+      // 这些判定意味着「只有浏览器能正确完成这次下载」：记住 URL，下载事件出现时也不要转给 NDM。
+      // RFC 2047 names need the browser's decoding; an oversize POST body cannot be replayed, and
+      // the fallback would re-fetch it as GET. Both must stay in the browser.
+      if (BROWSER_ONLY_REASONS.has(decision.reason)) {
+        browserOnlyUrls.set(snapshot.url, Date.now() + LIMITS.browserOnlyMs);
         pruneExpiring(browserOnlyUrls, 300);
       }
       return;

@@ -1,0 +1,148 @@
+name: Release
+
+# 只做手动触发：门禁全绿 → zip → crx → 按 manifest 版本发 Release。
+# Manual dispatch only: gate green → zip → crx → GitHub Release tagged with the manifest version.
+#
+# 门禁 = scripts/check.mjs（清单校验 + 四个单元测试 + 本地夹具全量双向断言）。
+# 夹具同时断言「该抓的一条不能少」和「不该抓的一条不能多」，这就是
+# 「不会下载预期以外的文件」的判据；任一条不过就不会有产物，也不会发 Release。
+# The gate is scripts/check.mjs. The fixture suite asserts both directions, which is how this
+# workflow proves no unexpected download can happen; a red gate produces no artifacts and no release.
+#
+# crx 需要仓库 secret CRX_PRIVATE_KEY（PEM 私钥原文，或它的 base64）。没有该 secret 时跳过 crx，
+# 并在 Release 正文里说明；私钥不入库，扩展 ID 由这把密钥唯一决定。
+# The crx needs repo secret CRX_PRIVATE_KEY (the PEM itself or its base64). Without it the crx
+# step is skipped and the release says so. The key never enters the repo; it fixes the extension ID.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只跑门禁与打包，不发 Release / gate and package only, no release'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # 空 secret 也必须是空字符串，供 if: env.CRX_KEY_PEM != '' 判断。
+      # Job-level copy so a missing secret stays detectable in step conditions.
+      CRX_KEY_PEM: ${{ secrets.CRX_PRIVATE_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Locate Chrome
+        run: |
+          set -e
+          for candidate in "$CHROME_PATH" /usr/bin/google-chrome /usr/bin/google-chrome-stable \
+                           /usr/bin/chromium /usr/bin/chromium-browser; do
+            if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+              echo "OPENNDM_BROWSER=$candidate" | tee -a "$GITHUB_ENV"
+              echo "browser: $candidate"
+              exit 0
+            fi
+          done
+          echo "::error::没有 Chrome/Chromium，夹具测试无法运行 / no browser for the fixture suite"
+          exit 1
+
+      - name: Read version from manifest
+        id: version
+        run: |
+          set -e
+          # 版本唯一来源是 manifest.json；package.json 由 validate 校验一致。
+          # manifest.json is the single source of truth; validate checks package.json against it.
+          VERSION="$(node -p "JSON.parse(require('fs').readFileSync('manifest.json','utf8')).version")"
+          test -n "$VERSION" || { echo "::error::manifest.json 没有版本 / missing version"; exit 1; }
+          echo "version=$VERSION" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Push gate (validate + unit tests + fixtures)
+        run: node scripts/check.mjs
+
+      - name: Package zip
+        run: node scripts/package.mjs --out "dist/openndm-extension-v${{ steps.version.outputs.version }}.zip"
+
+      - name: Package crx
+        if: env.CRX_KEY_PEM != ''
+        run: |
+          set -e
+          VERSION="${{ steps.version.outputs.version }}"
+          mkdir -p build
+          KEY=build/private.pem
+          if printf '%s' "$CRX_KEY_PEM" | grep -q -- '-----BEGIN'; then
+            printf '%s\n' "$CRX_KEY_PEM" > "$KEY"
+          else
+            printf '%s' "$CRX_KEY_PEM" | tr -d ' \r\n' | base64 -d > "$KEY"
+          fi
+          chmod 600 "$KEY"
+
+          # 解包刚生成的 zip，保证 crx 与 zip 内容完全一致。
+          # Unpack the zip we just built so the crx carries exactly the same files.
+          rm -rf build/ext build/profile
+          mkdir -p build/ext
+          unzip -q "dist/openndm-extension-v$VERSION.zip" -d build/ext
+
+          RUN=""
+          if command -v xvfb-run >/dev/null 2>&1; then RUN="xvfb-run -a"; fi
+          # shellcheck disable=SC2086
+          $RUN "$OPENNDM_BROWSER" \
+            --headless=new --no-sandbox --disable-gpu \
+            --user-data-dir="$PWD/build/profile" \
+            --pack-extension="$PWD/build/ext" \
+            --pack-extension-key="$KEY"
+          test -f build/ext.crx
+          mv build/ext.crx "dist/openndm-extension-v$VERSION.crx"
+          rm -rf build
+          ls -l dist
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openndm-extension-v${{ steps.version.outputs.version }}
+          path: dist/openndm-extension-v${{ steps.version.outputs.version }}.*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="v$VERSION"
+          ASSETS=("dist/openndm-extension-v$VERSION.zip")
+          CRX="dist/openndm-extension-v$VERSION.crx"
+          if [ -f "$CRX" ]; then ASSETS+=("$CRX"); fi
+
+          {
+            echo "版本以 manifest.json 为准 / the manifest owns the version: \`$VERSION\`"
+            echo
+            echo "- 发布前门禁：\`node scripts/check.mjs\` 全绿（清单校验 + 单元测试 + 夹具双向断言）。"
+            echo "- \`.zip\`：解压后在 chrome://extensions 以「加载已解压的扩展程序」安装。"
+            if [ -f "$CRX" ]; then
+              echo "- \`.crx\`：由仓库密钥 \`CRX_PRIVATE_KEY\` 签名，扩展 ID 固定；开发者拖拽安装，普通分发请走应用商店。"
+            else
+              echo "- 本次没有 \`.crx\`：仓库未配置 secret \`CRX_PRIVATE_KEY\`。"
+            fi
+          } > release-notes.md
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
+            gh release edit "$TAG" --notes-file release-notes.md
+          else
+            gh release create "$TAG" "${ASSETS[@]}" \
+              --title "OpenNDM-Extension $TAG" \
+              --notes-file release-notes.md \
+              --target "$GITHUB_SHA"
+          fi
+          gh release view "$TAG"

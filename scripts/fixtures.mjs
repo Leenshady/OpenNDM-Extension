@@ -15,6 +15,7 @@
  */
 
 import { createServer } from 'node:http';
+import { gzipSync } from 'node:zlib';
 
 const PNG_1PX = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -29,11 +30,26 @@ const ZIP_ROUTES = [
   ['/files/zip-c1.zip', 'hello-c1.bin', null],
   ['/files/post-c2.zip', 'hello-c2.bin', null],
   ['/files/zip-c3.zip', 'hello-c3.bin', null],
+  ['/files/zip-c14.zip', 'hello-c14.bin', null],
   // RFC 2047 编码文件名（网易邮箱式样），扩展应把它留给浏览器。
   // NetEase-style RFC 2047 encoded filename; the extension must leave it to the browser.
   ['/files/mail-c8.zip', 'mail-c8.bin',
     { 'Content-Disposition': 'attachment; filename="=?UTF-8?B?6YKu5Lu2LnppcA==?="' }]
 ];
+
+// 压缩响应：Content-Length 是压缩后字节，扩展不能把它当作文件大小发给 NDM。
+// Encoded response: Content-Length describes the compressed bytes, which must not be
+// reported to NDM as the file size.
+const GZIP_ROUTE = '/files/gzip-c12.zip';
+const GZIP_HEADERS = {
+  'Content-Encoding': 'gzip',
+  'Content-Disposition': 'attachment; filename="gzip-c12.zip"'
+};
+
+// 超过 96KB 的 POST 体：没有可重放的请求体，扩展必须放过。
+// A POST body over the 96KB cap leaves nothing replayable, so the extension must skip it.
+const BIG_POST_ROUTE = '/files/post-big-c13.zip';
+const BIG_POST_BYTES = 120_000;
 
 const MP4_BYTES = 1_536_000;
 const MP4_STUB = Buffer.concat([
@@ -132,6 +148,12 @@ function fixturePage(base) {
 <button id="btn-c7">c7 XHR 取图片</button>
 <a id="lnk-c8" href="${base}/files/mail-c8.zip">c8 RFC2047 文件名</a>
 <a id="lnk-c9" href="${base}/files/playlist.m3u8">c9 m3u8 清单</a>
+<a id="lnk-c12" href="${base}/files/gzip-c12.zip">c12 gzip 附件</a>
+<form id="form-c13" method="post" action="${base}/files/post-big-c13.zip">
+  <input type="hidden" id="inp-c13" name="blob" value=""><input type="hidden" name="hello" value="world">
+  <button id="btn-c13" type="submit">c13 超大 POST 体</button>
+</form>
+<a id="lnk-c14" href="${base}/redirect-c14.zip">c14 302 跳转到 zip</a>
 <button id="btn-c10">c10 blob 下载</button>
 <script>
 // 运行时给每个场景 URL 追加唯一参数，保证不被跨场景去重。
@@ -144,6 +166,9 @@ function fixturePage(base) {
     var url = el.getAttribute(attr) || '';
     if (url.indexOf(base) === 0) el.setAttribute(attr, url + '?r=' + el.id);
   });
+  // 超过扩展请求体上限的 POST：120KB 表单值在页面装载时写入，避免污染夹具源码。
+  // A POST body over the extension's cap; filled at load so the fixture source stays small.
+  document.getElementById('inp-c13').value = new Array(120001).join('x');
   document.getElementById('btn-c7').addEventListener('click', function () {
     var xhr = new XMLHttpRequest();
     xhr.open('GET', base + '/asset.png?r=btn-c7');
@@ -225,6 +250,20 @@ export function createFixtureServer() {
         'application/vnd.apple.mpegurl');
       return;
     }
+    if (path === '/redirect-c14.zip') {
+      // 302 之后才是真实文件；一条消息都不能多发 / The file arrives after a 302; nothing may be sent twice.
+      const query = new URL(request.url, 'http://127.0.0.1').search;
+      response.writeHead(302, { Location: `/files/zip-c14.zip${query}` });
+      response.end();
+      return;
+    }
+    if (path === BIG_POST_ROUTE) {
+      // 先读完超大请求体再回应，避免浏览器等待 100-continue。
+      // Drain the oversized body first so Chrome is not left waiting for a 100-continue.
+      request.resume();
+      request.on('end', () => sendBody(request, response, routes.get(path).body, 'application/zip', {}));
+      return;
+    }
     const zip = routes.get(path);
     if (zip) {
       sendBody(request, response, zip.body, 'application/zip', zip.headers || {});
@@ -247,6 +286,11 @@ export function createFixtureServer() {
       for (const [path, name, headers] of ZIP_ROUTES) {
         routes.set(path, { body: await makeZip(name, PAYLOAD), headers: headers || undefined });
       }
+      routes.set(GZIP_ROUTE, {
+        body: gzipSync(await makeZip('gzip-c12.bin', PAYLOAD)),
+        headers: GZIP_HEADERS
+      });
+      routes.set(BIG_POST_ROUTE, { body: await makeZip('hello-c13.bin', PAYLOAD), headers: undefined });
     },
     listen() {
       return new Promise((resolvePromise, rejectPromise) => {
@@ -326,6 +370,21 @@ export function buildScenarios(base) {
       id: 11, name: 'blob 下载不得发给 NDM',
       action: `(async()=>{document.getElementById('btn-c10').click();await new Promise(r=>setTimeout(r,1500));return 'ok';})()`,
       path: null, count: [0, 0], whole: true
+    },
+    {
+      id: 12, name: 'gzip 附件应捕获，但不得上报压缩大小',
+      action: `document.getElementById('lnk-c12').click()`,
+      path: '/files/gzip-c12.zip', count: [1, 1], match: ['6:normal'], notMatch: ['7:']
+    },
+    {
+      id: 13, name: '请求体超过上限的 POST 不得接管',
+      action: `document.getElementById('btn-c13').click()`,
+      path: '/files/post-big-c13.zip', count: [0, 0]
+    },
+    {
+      id: 14, name: '302 跳转后的 zip 只发一条',
+      action: `document.getElementById('lnk-c14').click()`,
+      path: '/files/zip-c14.zip', count: [1, 1], match: ['6:normal'], forbid: ['/redirect-c14.zip']
     }
   ];
 }
@@ -421,6 +480,14 @@ export async function runScenarios({ cdp, sleep, waitFor, base, messages, scenar
       }
       for (const needle of scenario.match || []) {
         if (!list.some((message) => String(message.text).includes(needle))) problems.push(`消息缺少 ${needle}`);
+      }
+      for (const absent of scenario.notMatch || []) {
+        // notMatch 按整行前缀判定：URL 里的数字不能被当成协议字段。
+        // notMatch compares whole line prefixes; digits inside the URL must not count as a field.
+        const hit = list.find((message) => String(message.text)
+          .split('\r\n')
+          .some((line) => line.startsWith(absent)));
+        if (hit) problems.push(`消息不该有 ${absent} 行：${messageUrl(hit)}`);
       }
       for (const forbidden of scenario.forbid || []) {
         const hit = messages.slice(marker).find((message) => messageUrl(message).includes(forbidden));

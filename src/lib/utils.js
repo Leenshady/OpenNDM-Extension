@@ -177,8 +177,12 @@ export function sanitizeHeaderValue(value) {
 
 /**
  * 提取 POST 请求体，并返回与之匹配的 Content-Type。
+ * 超过上限时返回 truncated，绝不返回半截请求体。
  * Extract a POST body and the matching Content-Type.
+ * Over the cap it reports truncated instead of returning a partial body.
  */
+export const MAX_POST_BODY_BYTES = 96 * 1024;
+
 export function serializeRequestBody(requestBody, originalContentType = '') {
   if (!requestBody) return { text: '', contentType: '' };
 
@@ -187,8 +191,17 @@ export function serializeRequestBody(requestBody, originalContentType = '') {
     let total = 0;
     for (const part of requestBody.raw) {
       if (!part || !part.bytes) continue;
+      total += new Uint8Array(part.bytes).length;
+    }
+    // 半截的体重放给服务器只会得到错误结果，宁可让浏览器自己下完。
+    // Replaying a partial body yields a wrong result; let the browser finish it instead.
+    if (total > MAX_POST_BODY_BYTES) {
+      return { text: '', contentType: '', truncated: true };
+    }
+    total = 0;
+    for (const part of requestBody.raw) {
+      if (!part || !part.bytes) continue;
       const bytes = new Uint8Array(part.bytes);
-      if (total + bytes.length > 96 * 1024) break;
       let text = '';
       for (let i = 0; i < bytes.length; i += 1) {
         text += String.fromCharCode(bytes[i]);
@@ -213,23 +226,31 @@ export function serializeRequestBody(requestBody, originalContentType = '') {
         }
       }
       parts.push(`--${boundary}--\r\n`);
-      return {
-        text: parts.join(''),
-        contentType: `multipart/form-data; boundary=${boundary}`
-      };
+      return limitBody(
+        parts.join(''),
+        `multipart/form-data; boundary=${boundary}`
+      );
     }
 
     const params = new URLSearchParams();
     for (const [name, values] of Object.entries(requestBody.formData)) {
       for (const value of values || []) params.append(name, String(value));
     }
-    return {
-      text: params.toString(),
-      contentType: originalContentType || 'application/x-www-form-urlencoded'
-    };
+    return limitBody(
+      params.toString(),
+      originalContentType || 'application/x-www-form-urlencoded'
+    );
   }
 
   return { text: '', contentType: '' };
+}
+
+// 表单体重放同样受上限约束 / A replayed form body obeys the same cap as a raw one.
+function limitBody(text, contentType) {
+  if (typeof text === 'string' && text.length > MAX_POST_BODY_BYTES) {
+    return { text: '', contentType: '', truncated: true };
+  }
+  return { text, contentType };
 }
 
 // 休眠，用于连接重试 / Sleep helper for connection retries.

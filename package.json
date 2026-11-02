@@ -1,12 +1,14 @@
 {
   "name": "openndm-extension",
-  "version": "0.2.4",
+  "version": "0.2.6",
   "private": true,
   "type": "module",
   "description": "OpenNDM-Extension: Manifest V3 download catcher for Neat Download Manager",
   "license": "GPL-3.0-or-later",
   "scripts": {
-    "check": "node scripts/validate.mjs",
+    "check": "node scripts/check.mjs",
+    "check:lite": "node scripts/check.mjs --no-fixtures",
+    "validate": "node scripts/validate.mjs",
     "package": "node scripts/validate.mjs && node scripts/package.mjs",
     "test": "node tests/background.test.mjs && node tests/rules.test.mjs && node tests/capture.test.mjs && node tests/package.test.mjs",
     "test:web": "node scripts/web-test.mjs",

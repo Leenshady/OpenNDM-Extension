@@ -1,0 +1,38 @@
+#!/bin/sh
+# 推送门禁：只有 scripts/check.mjs 全绿（含夹具双向断言）才允许 push。
+# Push gate: only a green scripts/check.mjs run (fixture assertions included) may push.
+#
+# 启用方式（一次性，由维护者自己执行，仓库脚本不改 git 配置）：
+# Enable once, by hand — nothing in this repo writes git config:
+#   git config core.hooksPath .githooks
+#
+# 本机 PATH 里没有 node 时，用 OPENNDM_NODE 指定可执行的 node。
+# When PATH has no node, point OPENNDM_NODE at a node binary.
+
+set -e
+cd "$(git rev-parse --show-toplevel)"
+
+if [ -n "$OPENNDM_NODE" ]; then
+  NODE_BIN="$OPENNDM_NODE"
+elif command -v node >/dev/null 2>&1; then
+  NODE_BIN=node
+else
+  for candidate in \
+    "/c/Users/ZZB001/AppData/Local/Programs/DeepSeek Harness/resources/runtime/primary-runtime/dependencies/node/bin/node.exe" \
+    "/c/Program Files/nodejs/node.exe"; do
+    if [ -x "$candidate" ]; then
+      NODE_BIN="$candidate"
+      break
+    fi
+  done
+fi
+
+if [ -z "$NODE_BIN" ]; then
+  echo "pre-push: 找不到 node，请设置 OPENNDM_NODE 后重试 / node not found, set OPENNDM_NODE." >&2
+  exit 1
+fi
+
+echo "pre-push: 运行门禁 node scripts/check.mjs / running the push gate"
+# 夹具测试需要浏览器；缺失时 check.mjs 会失败，而不是静默跳过。
+# Fixtures need a browser; check.mjs fails when it is missing instead of skipping quietly.
+"$NODE_BIN" scripts/check.mjs

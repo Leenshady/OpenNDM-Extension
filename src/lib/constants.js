@@ -253,8 +253,16 @@ export const LIMITS = Object.freeze({
   pendingCancel: 100,
   mediaPerTab: 30,
   recentCaptures: 20,
-  bypassTtlMs: 4000
+  bypassTtlMs: 4000,
+  browserOnlyMs: 15_000
 });
+
+// 判定为「只能由浏览器完成」的拒绝原因，兜底下载路径同样不得接管。
+// Deny reasons meaning only the browser can finish this download; the fallback must skip them too.
+export const BROWSER_ONLY_REASONS = new Set([
+  'rfc2047-filename',
+  'post-body-too-large'
+]);
 
 // 内部消息名 / Internal message names.
 export const MSG = Object.freeze({

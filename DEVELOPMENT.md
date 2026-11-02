@@ -50,11 +50,16 @@ _locales/en, _locales/zh_CN   界面文案
 tests/                        Node 单元/集成测试（无浏览器）
 scripts/
   validate.mjs                清单、资源、i18n、版本一致性校验
+  check.mjs                   推送门禁：validate + 四个单元测试 + 夹具全量（push 前必须全绿）
   package.mjs                 生成发布 zip（可复现）
   web-test.mjs                真浏览器 + 假 NDM 的网页冒烟测试
   fixtures.mjs                本地下载场景夹具服务与逐场景断言（供 web-test --fixtures 使用）
   make_icons.py               生成图标
+.github/workflows/release.yml 手动触发的发布流水线（门禁 → zip → crx → Release）
+.githooks/pre-push            本地 push 门禁，需 `git config core.hooksPath .githooks` 启用
 docs/                         隐私政策、商店权限说明、发布说明
+DOWNLOAD-STANDARDS.md         下载相关标准与真实实现（判定规则的依据手册）
+ROADMAP.md                    开发计划、能力上限、永久不做清单
 img/                          图标
 dist/                         打包输出（不入库）
 ```
@@ -94,8 +99,9 @@ content script ── MEDIA_FOUND ─► mediaByTab ──► 面板渲染（点
 
 `processHeaders()` 依次做：
 
-1. `decideCapture({ url, method, type, statusCode, contentType, contentDisposition, contentLength, contentRange, captureEnabled, captureMedia, ndmConnected, blocked, bypass, tabId })`。
-2. 拒绝时：若原因是 `rfc2047-filename`，把 URL 记入 `browserOnlyUrls`（15 s），避免兜底路径再转发；其余直接返回。
+1. `decideCapture({ url, method, type, statusCode, contentType, contentDisposition, contentLength, contentRange, captureEnabled, captureMedia, ndmConnected, blocked, bypass })`。
+2. 拒绝时：若原因属于 `BROWSER_ONLY_REASONS`（`rfc2047-filename`、`post-body-too-large`），把 URL 记入 `browserOnlyUrls`（`LIMITS.browserOnlyMs`，默认 15 s），避免兜底路径再转发；其余直接返回。
+   这两个原因都意味着「只有浏览器能正确完成这次下载」：RFC 2047 文件名 NDM 解不了，超限 POST 体没有可重放的请求体，兜底路径只会按 GET 重取。
 3. 接受且为 `media`/`hls` 且 `showMediaPanel`：写入 `mediaByTab` 并推送给内容脚本（**不自动发送**）。
 4. 非 `main_frame` 的媒体判定也直接返回（面板只服务当前页）。
 5. 其余：取 Cookie → `createPayload()` → 注册 `inflightCaptures` → `sendToNdm({ expectBrowserDownload: true })`。
@@ -130,6 +136,8 @@ content script ── MEDIA_FOUND ─► mediaByTab ──► 面板渲染（点
 
 ## 5. `decideCapture()` 规则
 
+规则背后的**行业标准与真实实现**（RFC 9110/6266/8187/2047、`<a download>` 边界、fetch+blob、Range/206、`Sec-Fetch-*`、MV3 能力、差距清单 G1–G12（含每条当前状态）见 [DOWNLOAD-STANDARDS.md](DOWNLOAD-STANDARDS.md)。改判定分支前先查那张表。
+
 输入（`src/lib/rules.js`）：
 
 | 字段 | 说明 |
@@ -140,6 +148,8 @@ content script ── MEDIA_FOUND ─► mediaByTab ──► 面板渲染（点
 | `type` | `main_frame`、`sub_frame`、`object`、`media`、`xmlhttprequest`、`other` |
 | `contentType` / `contentDisposition` | 归一化后的响应头 |
 | `contentLength` / `contentRange` | 大小推断 |
+| `contentEncoding` | 压缩响应（gzip/br/deflate）时大小未知：`Content-Length` 描述的是编码后字节，`size` 归 0 |
+| `postBodyTooLarge` | POST 体超过 96KB：不重放半截请求体 |
 | `captureEnabled` / `captureMedia` / `ndmConnected` / `blocked` / `bypass` | 外部状态 |
 
 输出：`{ capture, kind, reason, ext, size, filename, contentType }`。
@@ -149,7 +159,7 @@ content script ── MEDIA_FOUND ─► mediaByTab ──► 面板渲染（点
 | 顺序 | 条件 | 结果 |
 | --- | --- | --- |
 | 1 | 上下文缺失/被禁用/未连接/屏蔽/绕过 | `invalid-context` `capture-disabled` `ndm-disconnected` `site-blocked` `user-bypass` |
-| 2 | 非 http(s)、方法、状态码 | `not-http` `method` `status` |
+| 2 | 非 http(s)、方法、POST 体超 96KB、状态码 | `not-http` `method` `post-body-too-large` `status` |
 | 3 | 206 且非附件 | `partial-response` |
 | 4 | HTML 页面且非附件 | `html-page` |
 | 5 | 播放器预览图（B 站 `videoshot`）且非附件 | `preview-asset` |
@@ -186,7 +196,7 @@ content script ── MEDIA_FOUND ─► mediaByTab ──► 面板渲染（点
 | `4:` | 页面标题 |
 | `5:` | 页面 URL |
 | `6:` | 任务类型 `normal` / `media` / `hls` |
-| `7:` | 文件大小（字节，可省略） |
+| `7:` | 文件大小（字节，可省略）；响应带 `Content-Encoding`（非 `identity`）时**不写这一行**，因为 `Content-Length` 描述的是压缩后字节 |
 | `8:` | 响应 Content-Type（可省略） |
 | `9:` | 面板显示标签 |
 | `Origin:` / `Referer:` / `Cookie:` | 请求头 |
@@ -282,7 +292,7 @@ Cookie: a=b
 | `alarms` | Service Worker 保活与重连 |
 | `host_permissions: <all_urls>` | 下载可能来自任意站点 |
 
-商店文案与隐私政策见 [`docs/permission-justifications.md`](docs/permission-justifications.md)、[`docs/privacy-policy.md`](docs/privacy-policy.md)。
+商店文案与隐私政策见 [`docs/permission-justifications.md`](docs/permission-justifications.md)、[`docs/privacy-policy.md`](docs/privacy-policy.md)。下载判定所依据的协议标准与现实实现见 [`DOWNLOAD-STANDARDS.md`](DOWNLOAD-STANDARDS.md)。
 
 ---
 
@@ -302,6 +312,19 @@ node scripts/package.mjs --out custom.zip
 
 打包**不在每次修改时执行**：只有明确要求发布时才运行。
 
+### 11.1 门禁与发布流水线 / Gate and release pipeline
+
+- `node scripts/check.mjs` = validate + 四个单元测试 + 夹具全量；任一步失败即非零退出。**push 之前必须全绿**。
+  `--no-fixtures` 只给确实没有浏览器的环境：此时捕获行为未被验证，不能作为发布依据。
+- `.githooks/pre-push` 在本地执行同一条门禁。启用是维护者的一次性动作：`git config core.hooksPath .githooks`
+  （仓库里的任何脚本都不改 git 配置）；PATH 没有 node 时先 `export OPENNDM_NODE=<node.exe>`。
+- 发布**手动触发**（`.github/workflows/release.yml`）：定位 Chrome → 读 `manifest.json` 版本 → 门禁 →
+  `scripts/package.mjs` 出 zip → 解包该 zip 后用 Chrome `--pack-extension --pack-extension-key` 出 crx
+  （保证 crx 与 zip 内容一致）→ 按 `v<manifest 版本>` 创建/更新 GitHub Release。门禁不过就没有产物，也没有 Release。
+- crx 需要仓库 secret `CRX_PRIVATE_KEY`（PEM 原文或它的 base64）。缺省时跳过 crx 并在 Release 正文注明。
+  私钥不入库，且**扩展 ID 由这把密钥唯一决定**——换 key 等于换扩展。
+- 版本唯一来源是 `manifest.json`；`package.json` 由 `validate.mjs` 校验一致，Release tag 就是 `v` + 该版本。
+
 ---
 
 ## 12. 测试
@@ -311,11 +334,16 @@ node scripts/package.mjs --out custom.zip
 | 文件 | 覆盖 |
 | --- | --- |
 | `tests/background.test.mjs` | 消息路由、状态、设置归一化 |
-| `tests/rules.test.mjs` | `decideCapture()` 的正反例（约 30 条） |
+| `tests/rules.test.mjs` | `decideCapture()` 的正反例、`serializeRequestBody()` 的请求体上限（约 36 条） |
 | `tests/capture.test.mjs` | 用假的 `chrome.*` 驱动完整捕获链（网络路径、兜底、取消、面板、绕过） |
 | `tests/package.test.mjs` | 打包文件清单与可复现性 |
 
 `capture.test.mjs` 通过 `globalThis.chrome = {...}` 模拟 API，用 `FakeWebSocket` 记录发往 NDM 的消息，并用 `events.*` 手动触发监听器。
+
+### 推送门禁（`npm run check`）
+
+`scripts/check.mjs` 依次跑 validate、四个单元测试、`web-test.mjs --fixtures`，任一步失败即非零退出；
+输出只打印每步结论，失败时才回显该步末尾日志（`--verbose` 打印全部）。见 11.1。
 
 ### 网页冒烟测试（`npm run test:web`，需要浏览器与网络）
 
@@ -348,6 +376,9 @@ npm run test:web -- --seconds 7 --browser edge --headed --filter 知乎
 | 9 | RFC 2047 编码文件名附件 | 不发送（留给浏览器） |
 | 10 | m3u8 清单 | 捕获 1 条，`6:hls` |
 | 11 | 页面 `blob:` 下载 | 完全不发（断言不限 URL 前缀） |
+| 12 | gzip 压缩的 zip 附件 | 捕获 1 条，但报文里**不得有 `7:` 行**（`notMatch` 按整行前缀判定） |
+| 13 | 请求体超过 96KB 的 POST 下载 | 完全不发（既不能发半截体，也不能被兜底路径当 GET 重取） |
+| 14 | 点击后经 302 才到 zip | 恰好 1 条，且中间 URL `/redirect-c14.zip` 不得出现 |
 
 ```bash
 npm run test:fixtures -- --filter 视频      # 只跑匹配的场景
@@ -362,7 +393,7 @@ node scripts/web-test.mjs --fixtures --browser edge --verbose
 
 ## 13. 版本号
 
-- 写在 `manifest.json` 的 `version`，并同步到 `package.json`；`npm run check` 校验一致。
+- 写在 `manifest.json` 的 `version`，并同步到 `package.json`；`scripts/validate.mjs` 校验一致（`npm run check` 是完整门禁，见 11.1）。
 - 每次修改递增第三位；第三位满 10 进一到第二位：`0.2.1` → `0.2.2` … `0.2.9` → `0.3.0`。
 - Chrome 的版本比较按分段数值，进位规则由本项目自定，避免出现 `0.1.11` 这类第三位。
 
@@ -444,11 +475,16 @@ _locales/en, _locales/zh_CN   UI strings
 tests/                        Node unit/integration tests (no browser)
 scripts/
   validate.mjs                manifest, resource, i18n, and version validation
+  check.mjs                   push gate: validate + the four unit suites + the whole fixture run
   package.mjs                 reproducible release zip
   web-test.mjs                real-browser smoke test with a fake NDM
   fixtures.mjs                local download-scenario server + per-scenario assertions (used by web-test --fixtures)
   make_icons.py               icon generator
+.github/workflows/release.yml manual-release pipeline (gate → zip → crx → GitHub Release)
+.githooks/pre-push            local push gate, enabled by `git config core.hooksPath .githooks`
 docs/                         privacy policy, store permission justifications, build notes
+DOWNLOAD-STANDARDS.md         download standards and real-world behaviour (the reference behind the rules)
+ROADMAP.md                    development plan, capability ceiling, permanent never-do list
 img/                          icons
 dist/                         build output (not committed)
 ```
@@ -484,8 +520,8 @@ content script ── MEDIA_FOUND ─► mediaByTab ──► panel rendering (c
 
 `processHeaders()` runs, in order:
 
-1. `decideCapture({ url, method, type, statusCode, contentType, contentDisposition, contentLength, contentRange, captureEnabled, captureMedia, ndmConnected, blocked, bypass, tabId })`.
-2. On rejection: if the reason is `rfc2047-filename`, record the URL in `browserOnlyUrls` (15 s) so the fallback does not forward it; otherwise return.
+1. `decideCapture({ url, method, type, statusCode, contentType, contentDisposition, contentLength, contentRange, captureEnabled, captureMedia, ndmConnected, blocked, bypass })`.
+2. On rejection: if the reason is in `BROWSER_ONLY_REASONS` (`rfc2047-filename`, `post-body-too-large`), record the URL in `browserOnlyUrls` (`LIMITS.browserOnlyMs`, default 15 s) so the fallback does not forward it; otherwise return. Both reasons mean only the browser can finish the download: NDM cannot decode an RFC 2047 name, and an oversize POST body leaves nothing replayable — the fallback would re-fetch it as GET.
 3. On acceptance with `media`/`hls` and `showMediaPanel`: push to `mediaByTab` and the content script (**no automatic send**).
 4. Media decided for a non-`main_frame` request also returns early (the panel only serves the current page).
 5. Everything else: fetch cookies → `createPayload()` → register `inflightCaptures` → `sendToNdm({ expectBrowserDownload: true })`.
@@ -518,6 +554,8 @@ The **Download with NDM** context menu item (`MSG.DOWNLOAD_URL`) bypasses `decid
 
 ## 5. `decideCapture()` rules
 
+The **standards and real-world behaviour behind each branch** (RFC 9110/6266/8187/2047, the limits of `<a download>`, fetch+blob downloads, Range/206, `Sec-Fetch-*`, MV3 capabilities, and the G1–G12 gap list with its current status) are recorded in [DOWNLOAD-STANDARDS.md](DOWNLOAD-STANDARDS.md). Check it before changing a rule.
+
 Input (`src/lib/rules.js`):
 
 | Field | Meaning |
@@ -528,6 +566,8 @@ Input (`src/lib/rules.js`):
 | `type` | `main_frame`, `sub_frame`, `object`, `media`, `xmlhttprequest`, `other` |
 | `contentType` / `contentDisposition` | normalised response headers |
 | `contentLength` / `contentRange` | size inference |
+| `contentEncoding` | for compressed responses (gzip/br/deflate) the size is unknown: `Content-Length` describes encoded bytes, so `size` becomes 0 |
+| `postBodyTooLarge` | POST body above the 96KB cap: a partial body is never replayed |
 | `captureEnabled` / `captureMedia` / `ndmConnected` / `blocked` / `bypass` | external state |
 
 Output: `{ capture, kind, reason, ext, size, filename, contentType }`.
@@ -537,7 +577,7 @@ Output: `{ capture, kind, reason, ext, size, filename, contentType }`.
 | Step | Condition | Result |
 | --- | --- | --- |
 | 1 | missing context / disabled / not connected / blocked / bypassed | `invalid-context` `capture-disabled` `ndm-disconnected` `site-blocked` `user-bypass` |
-| 2 | not http(s), method, status | `not-http` `method` `status` |
+| 2 | not http(s), method, POST body above 96KB, status | `not-http` `method` `post-body-too-large` `status` |
 | 3 | 206 without attachment | `partial-response` |
 | 4 | HTML page without attachment | `html-page` |
 | 5 | player preview sprite (Bilibili `videoshot`) without attachment | `preview-asset` |
@@ -572,7 +612,7 @@ Set semantics (`constants.js`): `AUTO_CAPTURE_EXTENSIONS` (media + archives + do
 | `4:` | page title |
 | `5:` | page URL |
 | `6:` | task kind `normal` / `media` / `hls` |
-| `7:` | file size in bytes (optional) |
+| `7:` | file size in bytes, optional; omitted when the response carries a non-`identity` `Content-Encoding`, because `Content-Length` then describes encoded bytes |
 | `8:` | response Content-Type (optional) |
 | `9:` | panel label |
 | `Origin:` / `Referer:` / `Cookie:` | request headers |
@@ -660,7 +700,7 @@ All expiring maps are pruned by `pruneExpiring(map, limit)` to keep long session
 | `alarms` | keep the Service Worker alive and retry connections |
 | `host_permissions: <all_urls>` | downloads can come from any site |
 
-Store copy and privacy policy: [`docs/permission-justifications.md`](docs/permission-justifications.md), [`docs/privacy-policy.md`](docs/privacy-policy.md).
+Store copy and privacy policy: [`docs/permission-justifications.md`](docs/permission-justifications.md), [`docs/privacy-policy.md`](docs/privacy-policy.md). The protocol standards and real-world behaviour behind the capture rules: [`DOWNLOAD-STANDARDS.md`](DOWNLOAD-STANDARDS.md).
 
 ## 11. Build and packaging
 
@@ -678,6 +718,23 @@ node scripts/package.mjs --out custom.zip
 
 Packaging is **not** part of every change: run it only when a release build is requested.
 
+### 11.1 Gate and release pipeline
+
+- `node scripts/check.mjs` = validate + the four unit suites + the whole fixture run; any failing step exits
+  non-zero. **Push only on a green gate.** `--no-fixtures` exists for browserless environments, but then
+  capture behaviour is unverified and must never be a release basis.
+- `.githooks/pre-push` runs the same gate locally. Enabling it is a one-time maintainer action:
+  `git config core.hooksPath .githooks` (no script in this repo touches git config); if PATH has no node,
+  export `OPENNDM_NODE=<node.exe>` first.
+- Releases are **manually triggered** (`.github/workflows/release.yml`): locate Chrome → read the
+  `manifest.json` version → run the gate → build the zip with `scripts/package.mjs` → unpack that same zip and
+  pack a crx with Chrome `--pack-extension --pack-extension-key`, so the crx carries exactly the zip's files →
+  create or update the GitHub Release tagged `v<manifest version>`. A red gate yields neither artifacts nor a release.
+- The crx needs repo secret `CRX_PRIVATE_KEY` (the PEM itself or its base64). Without it the crx step is skipped
+  and the release notes say so. The key never enters the repo and **it alone determines the extension ID** —
+  a new key means a different extension.
+- `manifest.json` owns the version; `validate.mjs` keeps `package.json` in sync and the release tag is `v` + that value.
+
 ## 12. Tests
 
 ### Unit/integration tests (`npm test`, no browser)
@@ -685,11 +742,16 @@ Packaging is **not** part of every change: run it only when a release build is r
 | File | Coverage |
 | --- | --- |
 | `tests/background.test.mjs` | message routing, state, settings normalisation |
-| `tests/rules.test.mjs` | positive and negative `decideCapture()` cases (about 30) |
+| `tests/rules.test.mjs` | positive and negative `decideCapture()` cases plus the POST body cap (about 36) |
 | `tests/capture.test.mjs` | full capture chain driven by fake `chrome.*` APIs (network path, fallback, cancel, panel, bypass) |
 | `tests/package.test.mjs` | archive file list and reproducibility |
 
 `capture.test.mjs` installs `globalThis.chrome = {...}` to mock the APIs, records messages sent to NDM with a `FakeWebSocket`, and fires listeners through `events.*`.
+
+### Push gate (`npm run check`)
+
+`scripts/check.mjs` runs validate, the four unit suites and `web-test.mjs --fixtures` in order and exits non-zero on the first
+failure. Each step prints only its verdict; the tail of a failing step is echoed (`--verbose` prints everything). See 11.1.
 
 ### Web smoke test (`npm run test:web`, needs a browser and network)
 
@@ -724,6 +786,9 @@ message, `count: [0, 0]` requires none at all.
 | 9 | RFC 2047 encoded attachment filename | not sent (left to the browser) |
 | 10 | m3u8 playlist | one capture with `6:hls` |
 | 11 | page `blob:` download | nothing sent at all (URL prefix not restricted) |
+| 12 | gzip-encoded zip attachment | one capture, but **no `7:` line** (`notMatch` compares whole line prefixes) |
+| 13 | POST download whose body exceeds the 96KB cap | nothing sent (no partial body, and the fallback must not re-fetch it as GET) |
+| 14 | link that reaches the zip through a 302 | exactly one capture, and the intermediate `/redirect-c14.zip` URL never appears |
 
 ```bash
 npm run test:fixtures -- --filter 视频      # only matching scenarios
@@ -737,7 +802,7 @@ confirm the suite can actually fail.
 
 ## 13. Versioning
 
-- Stored in `manifest.json` (`version`) and mirrored in `package.json`; `npm run check` verifies they match.
+- Stored in `manifest.json` (`version`) and mirrored in `package.json`; `scripts/validate.mjs` verifies they match (`npm run check` is the full gate — see 11.1).
 - Raise the third component on every change; when it reaches 10 it carries into the second: `0.2.1` → `0.2.2` … `0.2.9` → `0.3.0`.
 - Chrome compares versions numerically per component; the carry rule is this project's own choice, adopted so a third component like `0.1.11` never appears.
 

@@ -73,6 +73,9 @@ export function decideCapture(input = {}) {
 
   const method = String(input.method || 'GET').toUpperCase();
   if (method !== 'GET' && method !== 'POST') return deny('method');
+  // 请求体超限就没有可重放的 POST，交给浏览器。
+  // Over the body cap there is no replayable POST; leave it to the browser.
+  if (method === 'POST' && input.postBodyTooLarge) return deny('post-body-too-large');
   if (input.statusCode !== 200 && input.statusCode !== 203 && input.statusCode !== 206) {
     return deny('status');
   }
@@ -85,7 +88,13 @@ export function decideCapture(input = {}) {
   const rawLength = Number(input.contentLength);
   const contentLength = Number.isFinite(rawLength) && rawLength > 0 ? rawLength : 0;
   const rangeTotal = totalSizeFromRange(input.contentRange);
-  const size = Math.max(contentLength, rangeTotal);
+  // Content-Encoding 存在时，Content-Length/Content-Range 描述的是压缩后的字节；
+  // NDM 重取时协商的编码未必相同，报这个数会算错分段甚至 416，所以按「大小未知」处理。
+  // With Content-Encoding the length describes the encoded form; a re-fetch may negotiate a
+  // different coding, so reporting it would break ranges or cause 416. Treat size as unknown.
+  const encoding = normalizeEncoding(input.contentEncoding);
+  const compressed = encoding !== '' && encoding !== 'identity';
+  const size = compressed ? 0 : Math.max(contentLength, rangeTotal);
 
   result.contentType = contentType;
   result.contentDisposition = contentDisposition;
@@ -204,6 +213,16 @@ export function decideCapture(input = {}) {
   }
 
   return deny('not-download');
+}
+
+// Content-Encoding 可能是逗号列表，取最后一个编码；identity 视为未压缩。
+// Content-Encoding may be a comma list; the last token applies. identity means uncompressed.
+function normalizeEncoding(value) {
+  const tokens = String(value || '')
+    .split(',')
+    .map((token) => token.trim().toLowerCase())
+    .filter(Boolean);
+  return tokens.length ? tokens[tokens.length - 1] : '';
 }
 
 // 常见播放器预览资源路径 / Common player preview asset paths.

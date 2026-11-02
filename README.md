@@ -112,7 +112,13 @@ JavaScript 通过 `chrome.downloads.onCreated` 触发的下载也会被接管。
 
 ## 开发
 
-开发环境、模块结构、捕获规则、NDM 协议、打包与测试等细节见 [DEVELOPMENT.md](DEVELOPMENT.md)。
+开发环境、模块结构、捕获规则、NDM 协议、打包与测试等细节见 [DEVELOPMENT.md](DEVELOPMENT.md)；
+判定规则背后的下载标准与逐条对应见 [DOWNLOAD-STANDARDS.md](DOWNLOAD-STANDARDS.md)；
+后续计划、能力上限与「永久不做」清单见 [ROADMAP.md](ROADMAP.md)。
+
+改动后先跑门禁：`node scripts/check.mjs`（清单校验 + 单元测试 + 本地夹具双向断言），全绿才允许 push。
+发布是手动触发的 GitHub Actions：`.github/workflows/release.yml` 会先跑同一条门禁，再打 zip 与 crx，
+并按 `manifest.json` 的版本创建 Release `v<version>`。
 
 ---
 
@@ -231,3 +237,10 @@ The code, tests, build scripts, documentation, and bilingual comments in this pr
 ## Development
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for the development environment, module layout, capture rules, NDM protocol, packaging, and tests.
+The download standards behind each rule, and how they map to this code, are in [DOWNLOAD-STANDARDS.md](DOWNLOAD-STANDARDS.md);
+the plan, capability ceiling and permanent never-do list are in [ROADMAP.md](ROADMAP.md).
+
+After any change run the gate: `node scripts/check.mjs` (manifest checks + unit suites + the offline fixture
+suite that asserts both directions). Push only when it is green.
+Releases are manual: `.github/workflows/release.yml` runs the same gate, builds the zip and the crx, and
+publishes a GitHub Release tagged `v<manifest version>`.

@@ -54,11 +54,17 @@ const BROWSERS = {
   chrome: [
     join(process.env.ProgramFiles || '', 'Google/Chrome/Application/chrome.exe'),
     join(process.env['ProgramFiles(x86)'] || '', 'Google/Chrome/Application/chrome.exe'),
-    join(process.env.LOCALAPPDATA || '', 'Google/Chrome/Application/chrome.exe')
+    join(process.env.LOCALAPPDATA || '', 'Google/Chrome/Application/chrome.exe'),
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/chromium',
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
   ].filter(Boolean),
   edge: [
     join(process.env['ProgramFiles(x86)'] || '', 'Microsoft/Edge/Application/msedge.exe'),
-    join(process.env.ProgramFiles || '', 'Microsoft/Edge/Application/msedge.exe')
+    join(process.env.ProgramFiles || '', 'Microsoft/Edge/Application/msedge.exe'),
+    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'
   ].filter(Boolean)
 };
 
@@ -250,6 +256,10 @@ async function waitFor(check, timeoutMs, intervalMs = 200) {
 /* -------------------------------------------------------------------------- */
 
 function findBrowser(name) {
+  // CI 与非标准安装位置用 OPENNDM_BROWSER 直接指定可执行文件。
+  // OPENNDM_BROWSER points straight at a binary (CI runners, non-default installs).
+  const override = process.env.OPENNDM_BROWSER;
+  if (override && existsSync(override)) return override;
   const candidates = BROWSERS[name] || [];
   return candidates.find((candidate) => existsSync(candidate)) || '';
 }
@@ -270,6 +280,9 @@ async function launchBrowser(executable, profileDir) {
     'about:blank'
   ];
   if (!options.headed) args.unshift('--headless=new');
+  // CI 容器里常以 root 运行，Chrome 只有显式关闭沙箱才肯启动。
+  // Chrome refuses to start as root (CI containers) unless the sandbox is off.
+  if (typeof process.getuid === 'function' && process.getuid() === 0) args.push('--no-sandbox');
 
   const child = spawn(executable, args, { stdio: 'ignore' });
   const portFile = join(profileDir, 'DevToolsActivePort');

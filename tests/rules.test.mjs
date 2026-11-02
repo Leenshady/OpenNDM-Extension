@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { decideCapture } from '../src/lib/rules.js';
 import { buildNdmMessage } from '../src/lib/ndm.js';
 import { isHostBlocked, normalizeHost, removeHostRule } from '../src/lib/blocklist.js';
-import { extensionFromMime, extensionOf, parseContentDisposition, serializeRequestBody } from '../src/lib/utils.js';
+import { extensionFromMime, extensionOf, MAX_POST_BODY_BYTES, parseContentDisposition, serializeRequestBody } from '../src/lib/utils.js';
 
 const base = {
   method: 'GET',
@@ -551,4 +551,111 @@ test('sanitizes CRLF in NDM messages', () => {
     cookies: 'a=1\r\nInjected: yes'
   });
   assert.doesNotMatch(message, /\r\nInjected:/);
+});
+
+test('treats a compressed response size as unknown', () => {
+  const result = decideCapture({
+    ...base,
+    type: 'main_frame',
+    url: 'https://example.com/archive.zip',
+    contentType: 'application/zip',
+    contentLength: 4000,
+    contentEncoding: 'gzip'
+  });
+  assert.equal(result.capture, true);
+  // 压缩长度不是文件真实长度，不能当 7: 发出去。
+  // The encoded length is not the file size, so it must not be reported.
+  assert.equal(result.size, 0);
+});
+
+test('keeps the size for identity and missing encodings', () => {
+  const identity = decideCapture({
+    ...base,
+    type: 'main_frame',
+    url: 'https://example.com/archive.zip',
+    contentType: 'application/zip',
+    contentLength: 4000,
+    contentEncoding: 'identity'
+  });
+  assert.equal(identity.size, 4000);
+  const plain = decideCapture({
+    ...base,
+    type: 'main_frame',
+    url: 'https://example.com/archive.zip',
+    contentType: 'application/zip',
+    contentLength: 4000
+  });
+  assert.equal(plain.size, 4000);
+});
+
+test('does not replay an oversized POST body', () => {
+  const result = decideCapture({
+    ...base,
+    type: 'main_frame',
+    method: 'POST',
+    url: 'https://example.com/export.zip',
+    contentType: 'application/zip',
+    contentDisposition: 'attachment; filename="export.zip"',
+    postBodyTooLarge: true
+  });
+  assert.equal(result.capture, false);
+  assert.equal(result.reason, 'post-body-too-large');
+
+  const get = decideCapture({
+    ...base,
+    type: 'main_frame',
+    method: 'GET',
+    url: 'https://example.com/export.zip',
+    contentType: 'application/zip',
+    postBodyTooLarge: true
+  });
+  assert.equal(get.capture, true);
+});
+
+test('reports an oversize raw request body instead of truncating it', () => {
+  const big = { raw: [{ bytes: new ArrayBuffer(MAX_POST_BODY_BYTES + 1) }] };
+  const result = serializeRequestBody(big, 'application/octet-stream');
+  assert.equal(result.truncated, true);
+  assert.equal(result.text, '');
+
+  const small = serializeRequestBody(
+    { raw: [{ bytes: Uint8Array.from('A'.repeat(64), (c) => c.charCodeAt(0)).buffer }] },
+    'application/octet-stream'
+  );
+  assert.equal(small.truncated, undefined);
+  assert.equal(small.text.length, 64);
+});
+
+test('applies the same cap to a urlencoded form body', () => {
+  const big = serializeRequestBody(
+    { formData: { blob: ['x'.repeat(MAX_POST_BODY_BYTES + 10)] } },
+    'application/x-www-form-urlencoded'
+  );
+  assert.equal(big.truncated, true);
+  assert.equal(big.text, '');
+
+  const small = serializeRequestBody({ formData: { hello: ['world'] } }, 'application/x-www-form-urlencoded');
+  assert.equal(small.truncated, undefined);
+  assert.equal(small.text, 'hello=world');
+  assert.equal(small.contentType, 'application/x-www-form-urlencoded');
+});
+
+test('omits the size line for a compressed capture', () => {
+  const decision = decideCapture({
+    ...base,
+    type: 'main_frame',
+    url: 'https://example.com/archive.zip',
+    contentType: 'application/zip',
+    contentLength: 4000,
+    contentEncoding: 'br'
+  });
+  const message = buildNdmMessage({
+    url: 'https://example.com/archive.zip',
+    method: 'GET',
+    type: decision.kind,
+    size: decision.size,
+    responseContentType: decision.contentType
+  });
+  assert.doesNotMatch(message, /\r\n7:/);
+  assert.match(message, /\r\n8:application\/zip\r\n/);
 });

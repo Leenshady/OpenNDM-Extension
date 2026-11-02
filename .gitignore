@@ -4,6 +4,7 @@
 .chrome-test*/
 node_modules/
 dist/
+build/
 docs/
 *.crx
 *.pem
