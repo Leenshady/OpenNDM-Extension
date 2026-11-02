@@ -5,15 +5,19 @@
  */
 
 /**
- * 网页冒烟测试：用临时真浏览器加载扩展，打开一批免登录的国内常用网站，
- * 观察扩展是否会向 NDM 发送任何"预期之外"的下载。
+ * 网页冒烟测试 + 本地夹具测试：用临时真浏览器加载扩展。
+ * 默认模式打开一批免登录的国内常用网站，观察扩展是否会向 NDM 发送"预期之外"的下载；
+ * --fixtures 模式起一个本地 HTTP 夹具服务，逐场景断言"该抓的必须抓到、不该抓的绝不抓"。
  *
- * Web smoke test: load the extension in a throwaway browser profile, visit a list of
- * popular Chinese sites that need no login, and report anything the extension would hand to
- * NDM. A fake NDM WebSocket server records the messages, so nothing is really downloaded.
+ * Web smoke test + local fixture suite, both in a throwaway browser profile.
+ * Default mode visits popular Chinese sites and reports anything handed to NDM;
+ * --fixtures serves a local fixture page and asserts every capture scenario both ways.
+ *
+ * A fake NDM WebSocket server records the messages, so nothing is really downloaded.
  *
  * 用法 / Usage:
  *   node scripts/web-test.mjs [--browser chrome|edge] [--seconds 8] [--headed] [--filter 关键词]
+ *   node scripts/web-test.mjs --fixtures [--filter 关键词] [--browser edge] [--verbose]
  */
 
 import { spawn } from 'node:child_process';
@@ -26,6 +30,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { collectFiles } from './package.mjs';
+import { buildScenarios, createFixtureServer, runScenarios } from './fixtures.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -62,17 +67,19 @@ const BROWSERS = {
 /* -------------------------------------------------------------------------- */
 
 function parseArgs(argv) {
-  const options = { browser: 'chrome', seconds: 8, headed: false, filter: '', keep: false, verbose: false };
+  const options = { browser: 'chrome', seconds: 8, headed: false, filter: '', keep: false, verbose: false, fixtures: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--browser' || arg === '-b') options.browser = argv[++i] || 'chrome';
     else if (arg === '--seconds' || arg === '-s') options.seconds = Math.max(2, Number(argv[++i]) || 8);
     else if (arg === '--headed') options.headed = true;
     else if (arg === '--filter' || arg === '-f') options.filter = String(argv[++i] || '');
+    else if (arg === '--fixtures') options.fixtures = true;
     else if (arg === '--keep-profile') options.keep = true;
     else if (arg === '--verbose' || arg === '-v') options.verbose = true;
     else if (arg === '--help' || arg === '-h') {
       console.log('用法: node scripts/web-test.mjs [--browser chrome|edge] [--seconds 8] [--headed] [--filter 关键词] [--keep-profile] [--verbose]');
+      console.log('      node scripts/web-test.mjs --fixtures [--filter 关键词]  # 本地夹具逐场景断言（离线）');
       process.exit(0);
     } else {
       console.error(`未知参数 / unknown argument: ${arg}`);
@@ -336,9 +343,49 @@ function summarize(message) {
   };
 }
 
+/**
+ * 夹具模式：逐场景执行并汇报，任何一条断言失败即返回非零。
+ * Fixture mode: run every scenario, report each verdict, and exit non-zero on any failure.
+ */
+async function runFixtureSuite({ cdp, fakeNdm, base }) {
+  let scenarios = buildScenarios(base);
+  if (options.filter) {
+    scenarios = scenarios.filter((scenario) => `${scenario.id} ${scenario.name}`.includes(options.filter));
+  }
+  if (!scenarios.length) fail(`没有匹配的场景 / no scenario matches "${options.filter}"`);
+
+  console.log(`夹具地址 / fixture base: ${base}`);
+  console.log(`场景数量 / scenarios: ${scenarios.length}\n`);
+
+  const results = await runScenarios({
+    cdp, sleep, waitFor, base, messages: fakeNdm.messages, scenarios
+  });
+
+  const failed = results.filter((item) => item.problems.length);
+  console.log('');
+  if (!failed.length) {
+    console.log(`结果：${results.length} 个夹具场景全部符合预期。`);
+    console.log('Result: every fixture scenario behaved as expected.');
+    return 0;
+  }
+  console.log(`结果：${failed.length}/${results.length} 个场景不符合预期。`);
+  console.log('Result: fixture verdict failed.');
+  return 1;
+}
+
 async function main() {
   const executable = findBrowser(options.browser);
   if (!executable) fail(`找不到浏览器 / browser not found: ${options.browser}`);
+
+  // 夹具模式：本地 HTTP 服务提供测试页与场景端点，全程离线。
+  // Fixture mode: a local HTTP server provides the pages and endpoints; fully offline.
+  let fixture = null;
+  let fixtureBase = '';
+  if (options.fixtures) {
+    fixture = createFixtureServer();
+    fixtureBase = await fixture.listen().catch((error) => fail(`无法启动夹具服务 / cannot start fixture server: ${error.message}`));
+    await fixture.prepare();
+  }
 
   const profileDir = await mkdtemp(join(tmpdir(), 'ndm-web-test-'));
   const fakeNdm = createFakeNdm();
@@ -397,9 +444,11 @@ async function main() {
     }
     if (options.verbose) console.log('extension id:', extensionId);
 
-    // 打开一个轻量页面唤醒 Service Worker，让它连接假 NDM。
+    // 打开一个轻量页面唤醒 Service Worker，让它连接假 NDM。夹具模式用本地页面，不依赖外网。
     // Open a lightweight page to start the worker so it connects to the fake NDM.
-    const warmup = await cdp.send('Target.createTarget', { url: 'https://www.baidu.com/robots.txt' }).catch(() => null);
+    // Fixture mode uses the local page and never needs the network.
+    const warmupUrl = options.fixtures ? `${fixtureBase}/index.html` : 'https://www.baidu.com/robots.txt';
+    const warmup = await cdp.send('Target.createTarget', { url: warmupUrl }).catch(() => null);
     const connected = await waitFor(() => fakeNdm.sockets.size > 0, 10_000, 200);
     if (warmup?.targetId) await cdp.send('Target.closeTarget', { targetId: warmup.targetId }).catch(() => null);
     if (!connected) {
@@ -408,7 +457,12 @@ async function main() {
 
     console.log(`浏览器 / browser: ${executable}`);
     console.log(`扩展 ID / extension: ${extensionId}`);
-    console.log(`假 NDM 端口 / fake NDM port: ${ndmPort}`);
+    console.log(`假 NDM 端口 / fake NDM port: ${ndmPort}\n`);
+
+    if (options.fixtures) {
+      return await runFixtureSuite({ cdp, fakeNdm, base: fixtureBase });
+    }
+
     console.log(`每个站点停留 / per-site wait: ${options.seconds}s\n`);
 
     const sites = options.filter
@@ -483,6 +537,7 @@ async function main() {
       // 浏览器可能已经退出 / The browser may already be gone.
     }
     await fakeNdm.close();
+    await fixture?.close().catch(() => null);
     await sleep(500);
     if (!child.killed) child.kill();
     if (!options.keep) {

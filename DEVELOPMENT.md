@@ -52,6 +52,7 @@ scripts/
   validate.mjs                清单、资源、i18n、版本一致性校验
   package.mjs                 生成发布 zip（可复现）
   web-test.mjs                真浏览器 + 假 NDM 的网页冒烟测试
+  fixtures.mjs                本地下载场景夹具服务与逐场景断言（供 web-test --fixtures 使用）
   make_icons.py               生成图标
 docs/                         隐私政策、商店权限说明、发布说明
 img/                          图标
@@ -328,6 +329,35 @@ node scripts/package.mjs --out custom.zip
 npm run test:web -- --seconds 7 --browser edge --headed --filter 知乎
 ```
 
+### 夹具测试（`npm run test:fixtures`，需要浏览器，**不需要网络**）
+
+站点冒烟测试只能证明「没多抓」，夹具测试证明「该抓的也抓到了」：`scripts/fixtures.mjs` 起一个本地 HTTP 服务，
+提供测试页与一组响应头/状态码各异的端点，用 CDP 驱动真浏览器逐个场景操作，再断言假 NDM 收到的消息条数与字段内容。
+方向是双向的：`count: [1, 1]` 要求恰好一条，`count: [0, 0]` 要求一条都不许有。
+
+| # | 场景 | 预期 |
+| --- | --- | --- |
+| 1 | zip 直链点击导航 | 捕获 1 条（`normal`，headers 或 downloads 兜底） |
+| 2 | POST 表单提交下载 | 捕获 1 条，含 `1:POST` 与 `__0NeatPostData9__:` 请求体 |
+| 3 | 直接导航到 zip | 捕获 1 条 |
+| 4 | `application/octet-stream` 无扩展名导航 | 捕获 1 条（`forced-download`） |
+| 5 | `Content-Disposition` 附件、URL 无扩展名 | 捕获 1 条 |
+| 6 | HTML 但服务器标记为附件 | 捕获 1 条 |
+| 7 | 视频页加载 + `<video>` 取元数据/206 | 不发送（只进面板） |
+| 8 | XHR 取回图片 | 不发送 |
+| 9 | RFC 2047 编码文件名附件 | 不发送（留给浏览器） |
+| 10 | m3u8 清单 | 捕获 1 条，`6:hls` |
+| 11 | 页面 `blob:` 下载 | 完全不发（断言不限 URL 前缀） |
+
+```bash
+npm run test:fixtures -- --filter 视频      # 只跑匹配的场景
+node scripts/web-test.mjs --fixtures --browser edge --verbose
+```
+
+场景的 zip 由 `makeZip()` 现场构造（STORE 条目 + 手写 CRC32），保证浏览器按真实压缩包处理；
+每个场景使用独立 URL，避免 `recentSent` 去重把后一个场景吞掉。断言逻辑改动后建议做一次故障注入
+（把某条预期改成 `[0, 0]`）确认测试确实会失败。
+
 ---
 
 ## 13. 版本号
@@ -416,6 +446,7 @@ scripts/
   validate.mjs                manifest, resource, i18n, and version validation
   package.mjs                 reproducible release zip
   web-test.mjs                real-browser smoke test with a fake NDM
+  fixtures.mjs                local download-scenario server + per-scenario assertions (used by web-test --fixtures)
   make_icons.py               icon generator
 docs/                         privacy policy, store permission justifications, build notes
 img/                          icons
@@ -671,6 +702,38 @@ Packaging is **not** part of every change: run it only when a release build is r
 ```bash
 npm run test:web -- --seconds 7 --browser edge --headed --filter 知乎
 ```
+
+### Fixture test (`npm run test:fixtures`, needs a browser, **no network**)
+
+The site smoke test can only prove "nothing extra was captured"; the fixture test proves the expected
+captures actually happen. `scripts/fixtures.mjs` serves a local page plus endpoints with varied response
+headers/status codes, drives a real browser through CDP case by case, and asserts how many messages the
+fake NDM received and what they contain. Both directions matter: `count: [1, 1]` requires exactly one
+message, `count: [0, 0]` requires none at all.
+
+| # | Scenario | Expectation |
+| --- | --- | --- |
+| 1 | click a direct zip link | one capture (`normal`, via headers or the downloads fallback) |
+| 2 | form POST download | one capture with `1:POST` and a `__0NeatPostData9__:` body |
+| 3 | navigate straight to a zip | one capture |
+| 4 | extensionless `application/octet-stream` navigation | one capture (`forced-download`) |
+| 5 | `Content-Disposition` attachment, extensionless URL | one capture |
+| 6 | HTML served as an attachment | one capture |
+| 7 | video page: load + `<video>` metadata/206 | not sent (panel only) |
+| 8 | image fetched by XHR | not sent |
+| 9 | RFC 2047 encoded attachment filename | not sent (left to the browser) |
+| 10 | m3u8 playlist | one capture with `6:hls` |
+| 11 | page `blob:` download | nothing sent at all (URL prefix not restricted) |
+
+```bash
+npm run test:fixtures -- --filter 视频      # only matching scenarios
+node scripts/web-test.mjs --fixtures --browser edge --verbose
+```
+
+The zips are built on the fly by `makeZip()` (STORE entries, hand-written CRC32) so browsers treat them
+as real archives; every scenario uses its own URL because `recentSent` dedupe would otherwise swallow the
+next case. After changing assertion logic, do one fault injection (flip an expectation to `[0, 0]`) to
+confirm the suite can actually fail.
 
 ## 13. Versioning
 
