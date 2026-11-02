@@ -95,3 +95,12 @@ Manifest V3 扩展只能看到 **HTTP 层可见的那部分用户意图**：响�
 - **crx 扩展 ID 由这把私钥唯一决定**：换 key 等于换扩展，私钥不可入库、不可随意轮换。
 - 服务端强制：若要把门禁变成 push 的硬约束，在分支保护里要求 `Release` 工作流的门禁作业通过；默认只做本地 hook + 手动发布。
 
+### 7.1 商店不提供私钥，crx 与商店版是两条独立的链
+
+结论，别再重复调查：
+
+- **Edge Add-ons 不签发也不托管任何私钥。** 提交时上传的是 `.zip`（[Publish a Microsoft Edge extension](https://learn.microsoft.com/en-us/microsoft-edge/extensions/publish/publish-extension) 的 Step 1「Create a `.zip` file for the extension package」、Step 3「Drag your package here (.zip)」），签名发生在微软的分发侧，商店页面里没有任何可下载的 `.pem`。
+- **`.pem` 只能自己生成**——浏览器 `edge://extensions` / `chrome://extensions` 的 Pack extension，或 `chrome --pack-extension`（[如何保证扩展 ID 不变](https://learn.microsoft.com/en-us/answers/questions/1411624/how-can-i-ensure-that-the-extension-id-remains-the)）。反复用同一把 key 打包，ID 才稳定。
+- 因此 **商店条目与 CI 产出的 crx 是两个不同 ID 的扩展**，更新渠道互不相干：商店版走微软签名与商店自动更新；crx 走我们的 `CRX_PRIVATE_KEY`，只用于手动侧装或自托管分发（[Alternative ways to distribute an extension](https://learn.microsoft.com/en-us/microsoft-edge/extensions/developer-guide/alternate-distribution-options)）。不要把 crx 当成「商店版的同源更新包」。
+- **不做**「让 crx 的 ID 与商店那个 ID 一致」：机制上要在 `manifest.json` 写 `key` 字段（公钥决定 ID，见 [Verified uploads in the Chrome Web Store](https://developer.chrome.com/blog/verified-uploads-cws)），但改动已上架条目要重新提交过审，收益不抵成本。
+
