@@ -1,0 +1,19 @@
+@echo off
+
+$node = 'C:\Users\ZZB001\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
+
+& $node scripts/validate.mjs
+
+& $node tests/background.test.mjs
+
+& $node tests/rules.test.mjs
+
+& $node tests/capture.test.mjs
+
+& $node tests/package.test.mjs
+
+"--- package ---"
+
+& $node scripts/package.mjs --verbose
+
+pause

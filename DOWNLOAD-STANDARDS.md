@@ -194,7 +194,7 @@ RFC 2047 主要来自非标准邮件/网盘实现（Gmail 附件名是常见例�
 
 ## 9. 场景 ↔ 夹具覆盖矩阵
 
-`node scripts/web-test.mjs --fixtures` 的 14 个场景（[scripts/fixtures.mjs:317-390](scripts/fixtures.mjs#L317-L390)）与上文模式的对应：
+`node scripts/web-test.mjs --fixtures` 的 15 个场景（[scripts/fixtures.mjs:859-938](scripts/fixtures.mjs#L859-L938)）与上文模式的对应：
 
 | 夹具场景 | 覆盖的第 3 节模式 | 期望 |
 | --- | --- | --- |
@@ -212,6 +212,7 @@ RFC 2047 主要来自非标准邮件/网盘实现（Gmail 附件名是常见例�
 | 12 gzip 附件 | §2.4 | 捕获，但消息里**不得出现 `7:` 行**（`notMatch` 按整行前缀判定） |
 | 13 请求体超过 96KB 的 POST | §2.4、G10/G12 | **0 条**（既不能发半截体，也不能被兜底路径当 GET 重取） |
 | 14 302 跳转到 zip | §5、G6 | 恰好 1 条，且 `/redirect-c14.zip` 不得出现 |
+| 15 面板三态互斥（折叠胶囊 / 展开卡片 / 贴边圆球）、贴边悬停不循环且只认屏内露出的那一条、点页面其他地方或 ⌄ 收起并回到原来那条边、位置恢复、不被滚动条遮挡 | 不属于下载判定（界面） | **0 条**：整段真实鼠标交互期间不许发出任何消息 |
 
 **尚未被夹具覆盖**（想验证时先补场景再改规则）：跨源 `<a download>`（#3）、ReadableStream 多分片并行（#7）、StreamSaver / File System Access（#8/#9）、签名参数在几十秒后过期的 CDN（#11）、`multipart/byteranges`、416。
 

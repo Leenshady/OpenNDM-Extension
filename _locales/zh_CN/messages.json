@@ -22,6 +22,7 @@
   "mediaPanelSubtitle": { "message": "使用 Neat Download Manager 下载" },
   "close": { "message": "关闭" },
   "mediaPanelOpen": { "message": "展开媒体面板" },
+  "mediaPanelDrag": { "message": "拖动移动，靠近边缘松手即可贴边隐藏" },
   "minimize": { "message": "最小化" },
   "mediaFile": { "message": "媒体文件" },
   "downloadWithNdm": { "message": "使用 NDM 下载" },

@@ -236,6 +236,7 @@ Cookie: a=b
 | --- | --- | --- |
 | `settings` | local | `captureEnabled` `captureMedia` `showMediaPanel` `autoCancelBrowserDownload` `ndmPort` `mediaMinSize` |
 | `blockedSites` | local | 主机名数组（去重、小写） |
+| `panelPlace` | local | 胶囊原点与贴边方向 `{ left, top, dock }`（卡片是它的浮层，偏移现算，不单独存）；只是界面偏好，读写失败不影响捕获 |
 | `sessionState` | session | `recentCaptures`、`bypassUntil` 等会话级状态 |
 
 `normalizeSettings()` 会对端口（1–65535）与 `mediaMinSize`（0–512 MB）做钳制。
@@ -261,11 +262,20 @@ Cookie: a=b
 ## 8. 媒体面板
 
 - 数据来源：DOM（`video`、`audio`、`source`、`embed`、`object`）、网络媒体（`kind: media/hls` 且 `showMediaPanel`）、B 站 `__playinfo__` 的 `dash.video/audio`。
-- 面板由内容脚本创建：`panelHost`（Shadow DOM）+ `launcher`（最小化胶囊）。默认 `collapsed = true`。
+- 面板由内容脚本创建：`panelHost`（Shadow DOM）+ 卡片 `.panel` + 胶囊 `.launcher`。默认 `collapsed = true`，三种状态互斥：折叠只有胶囊、展开只有卡片、贴边只有收成圆球的胶囊（复盘见 [docs/ui-review-panel.md](docs/ui-review-panel.md)）。
 - 展开/收起通过 `PANEL_STATE { open }` 与 worker 的 `panelOpenTabs` 同步；`GET_STATE` 返回当前标签的 `panelOpen`，popup 开关与之双向联动。
 - 导航（`webNavigation.onCommitted`）重置该标签的展开状态；设置项关闭时移除面板。
 - 不可下载的源（DRM、`blob:`、`data:`、MSE-only）不列出。
 - 点击条目发送 `DOWNLOAD_URL`（手动路径）。
+- **自由拖动**：标题栏 `.head` 与胶囊都能拖动（pointer 事件），位置夹在可视区内；松手时若「卡片 ∪ 胶囊」的并集距某条边 ≤ `PLACE_SNAP`（24px）就吸附到该边——并集是必需的：卡片永远开在胶囊上方，只量胶囊的话上下左右四条边只有两条能被这个手势触发。
+- **视口基准是不含滚动条的可视区**：横向用 `documentElement.clientWidth`（`viewportWidth()`），纵向用 `clientHeight`。`window.innerWidth` 把 classic 滚动条轨道算在内，Windows 默认的「预留位置的细滚动条」同样预留宽度（实测 15px），按它定位会让卡片或胶囊正好压在滚动条下面。展开高度上限为 `min(430px, 80vh)`：卡片比可视区还高时上下夹紧互相矛盾，图标与卡片都会掉出去点不到。
+- **贴边隐藏（只有胶囊会贴边）**：`place = { left, top, dock }` 永远是**胶囊左上角**。`applyPlace()` 把停靠轴钉在可视区边上，再给胶囊加一个 `translate(calc(-100% + DOCK_PEEK))`（左/上）或 `translate(calc(100% - DOCK_PEEK))`（右/下）的沉入位移——注意方向：左贴边留在屏内的是元素**右侧**那 30px。所以 `DOCK_PEEK`（30）必须 ≥ 球心 20 + 图标半宽 8.5，图标才完整可见；胶囊同时收成 40px 正圆、徽标平滑退场。探出时夹紧宽度改用整颗胶囊的 `PILL_FLOAT_W`，否则探出的半截会挂出视口。点它先脱离贴边再展开，一开始拖动也自动脱离；从边上点开的面板再收起时吸回**同一条边**（`dockResume`，见下）。卡片从不参与沉入，屏上不存在「半截卡片」。
+- **探出判定是两块静态矩形，不是元素自己的 hover**：`hoverRects()` 只由 `place`、贴边方向和可视区算出两块区域，window 的 passive `pointermove` 拿指针坐标对它求命中——`enter` 是**沉住时胶囊在屏内留下的那一条**（`DOCK_PEEK × DOCK_SIZE`，停靠轴钉在边上），`keep` 是**探出后整颗胶囊**（`PILL_FLOAT_W × 高`），两者外沿再各放宽 `HOVER_MARGIN`（8px）。不能用胶囊的 `pointerenter/pointerleave`：胶囊一动命中就重算，探出→离开→收回→再进入自激循环，指针停在边附近表现为无限弹出/收起。`enter` 只认露出的那一条是关键：旧判据按整颗胶囊算，离边还有几十像素球就弹了，用户看到的是「鼠标还没到贴边胶囊就弹出」。探出后要收回，指针必须彻底走出 `keep` 再放宽 8px，所以在球身上逛、原地 1px 抖动都不翻状态。刚吸附或刚收回边上时 `hoverArmed` 置假：指针就停在刚形成的那块区域里，不解除会立刻把球弹回屏内；指针完全走出该区域再回来时重新武装。
+- **收起回到原来的边**：点贴边胶囊展开卡片时把 `place.dock` 记进 `dockResume`，`setPanelCollapsed(true)`（点 ⌄ 或点网页其他地方）发现 `dock` 已空而 `dockResume` 有值，就把停靠方向写回去、重贴边并落盘——否则胶囊会飘在刚脱离的位置上，看起来像「贴边被点开又贴不回去了」。真拖动会清空 `dockResume`：用户已经把它挪走，收起时不该再吸回老边缘。
+- **点击网页其他地方自动收起**：`document` 捕获阶段的 `pointerdown`（页面的 `stopPropagation` 拦不住）在面板展开时把卡片折回胶囊；`event.composedPath()` 里有 `panelHost` 或 `toastHost` 才算「点在内部」——面板与提示各挂各的 shadow host，光比 `event.target` 认不出跨 shadow 的归属。拖动中（`dragSession`）与非左键不触发。
+- **展开/收起不跳位**：卡片是胶囊的浮层，偏移由 `applyCardAnchor()` 现算（右对齐、默认开在上方），所以折叠/展开只改变尺寸与沉入量，`place` 原点一动不动——旧模型「`place` 指当前可见元素 + `placedBox` 锚角换算」正是跳位的来源，已删除。横向只夹紧不翻转，纵向的开合方向在展开时定下（`cardBelow`）并在拖动中冻结，避免越过阈值那一下整块瞬移。
+- 位置与贴边方向写入 `chrome.storage.local` 的 `panelPlace`（去抖 200ms，只存 `{ left, top, dock }`），跨页面、跨重新加载保持；`applyPlace()` 把结果反映到 `panelHost` 的 `data-dock` / `data-left` / `data-top`（夹具测试读这三个属性，配合未变换的 `offsetWidth/offsetHeight` 判断贴边那条边是否真的钉在可视区上，以及圆球是否真的收成 40px）。
+- `panelHost` 本身 `pointer-events: none`，只有卡片和胶囊接收事件——贴边后胶囊虽沉进边缘，也不会挡住页面点击。
 
 ---
 
@@ -379,6 +389,7 @@ npm run test:web -- --seconds 7 --browser edge --headed --filter 知乎
 | 12 | gzip 压缩的 zip 附件 | 捕获 1 条，但报文里**不得有 `7:` 行**（`notMatch` 按整行前缀判定） |
 | 13 | 请求体超过 96KB 的 POST 下载 | 完全不发（既不能发半截体，也不能被兜底路径当 GET 重取） |
 | 14 | 点击后经 302 才到 zip | 恰好 1 条，且中间 URL `/redirect-c14.zip` 不得出现 |
+| 15 | CDP 真鼠标全流程：折叠态检查 → 点胶囊展开 → 点 ⌄ 收起 → 再展开 → 拖卡片到右边缘（自动收起并贴边）→ 悬停滑出 → 移开再沉回 → 点它脱离并展开 → 拖胶囊到左边缘 → 点它展开 → 拖卡片到下边缘 → 逐点采样两块探出矩形 → 重新加载 → 点圆球展开 → 点卡片内部不收回 → 点网页其他地方收回成胶囊 → 点 ⌄ 收起 | 三态互斥每一步都成立：折叠态只有胶囊（图标 + 徽标，图标中线与胶囊中线相差 ≤1.5px）；展开态只有卡片且四边完整落在**不含滚动条的可视区**内、胶囊不可见；点 ⌄ 后 `left`/`top` 逐像素不变；贴边态 `dock` 正确、圆球 `offsetWidth×offsetHeight` = 40×40、卡片不再占布局、屏内正好露 30px 且图标完整落在其中并居中；悬停判定**只随指针位置改变**且**只有落到屏内那一条才弹**——落在"探出后才有"的那半截上必须仍贴边、落在露出的那一条上必须探出、迟滞带内与原地 1px 抖动都不翻、静止连续采样恒定（旧实现挂在元素自己的 `pointerenter/leave` 上，正是这里无限弹出/收起）；重新加载后 `dock`、钉住的底边与自由轴 `left` 不变；点卡片内部面板仍在；点网页其他地方与点 ⌄ 都收回成胶囊**并吸回原来那条边**（`dock` 与底边、`left` 都对得上），收回后圆球仍可再展开；整个过程**一条消息都不发** |
 
 ```bash
 npm run test:fixtures -- --filter 视频      # 只跑匹配的场景
@@ -650,6 +661,7 @@ Notes:
 | --- | --- | --- |
 | `settings` | local | `captureEnabled` `captureMedia` `showMediaPanel` `autoCancelBrowserDownload` `ndmPort` `mediaMinSize` |
 | `blockedSites` | local | hostname list (deduped, lowercase) |
+| `panelPlace` | local | the pill's origin and docked side `{ left, top, dock }` (the card is its popover and its offset is computed, so nothing else is stored); a UI preference only — failing to read or write it must not affect capture |
 | `sessionState` | session | `recentCaptures`, `bypassUntil`, and other session state |
 
 `normalizeSettings()` clamps the port (1–65535) and `mediaMinSize` (0–512 MB).
@@ -678,6 +690,15 @@ All expiring maps are pruned by `pruneExpiring(map, limit)` to keep long session
 - Navigation (`webNavigation.onCommitted`) resets the expanded state for that tab; disabling the setting removes the panel.
 - Undownloadable sources (DRM, `blob:`, `data:`, MSE-only) are not listed.
 - Clicking an entry sends `DOWNLOAD_URL` (manual path).
+- **Free drag**: the `.head` title bar and the pill both drag (pointer events); the position is clamped to the client box and, on release, snaps to whichever edge the *union of card and pill* is within `PLACE_SNAP` (24 px) of. The union is required: the card always opens above the pill, so measuring the pill alone would make only two of the four edges reachable by that gesture.
+- **Placement uses the scrollbar-free client box**: horizontally `documentElement.clientWidth` (`viewportWidth()`), vertically `clientHeight`. `window.innerWidth` counts classic scrollbar tracks, and Windows' default "scrollbars take up space" thin bars reserve width too (measured 15 px), so placing by it parks the card or the pill exactly under the bar. The expanded card is capped at `min(430 px, 80vh)`: a card taller than the client box makes the clamp's two bounds contradict each other, and both the icon and the card end up unreachable.
+- **Edge docking (the pill is the only thing that docks)**: `place = { left, top, dock }` is *always* the pill's top-left. `applyPlace()` pins the docked axis to the client-box edge and then sinks the pill with `translate(calc(-100% + DOCK_PEEK))` (left/top) or `translate(calc(100% - DOCK_PEEK))` (right/bottom) — mind the direction: a left dock leaves the element's **right** 30 px on screen. That is why `DOCK_PEEK` (30) has to be at least the ball's centre 20 plus half the icon 8.5, so the icon stays whole; the pill also morphs into a 40 px circle and the count badge tweens away. While peeked, the clamp uses the full `PILL_FLOAT_W` width or the slid-out half hangs off the edge. Clicking the ball undocks first and then expands, and starting to drag also undocks; folding a card that was opened from an edge re-docks it to **that same edge** (`dockResume`, below). The card never sinks, so there is never a half-cut card on screen.
+- **The peek decision is two static rectangles, not the element's own hover**: `hoverRects()` derives both only from `place`, the docked side and the client box, and a passive `pointermove` on window hit-tests the pointer against them — `enter` is **the band the parked ball leaves on screen** (`DOCK_PEEK × DOCK_SIZE`, docked axis pinned to the edge), `keep` is **the whole pill once slid out** (`PILL_FLOAT_W` × height), each widened by `HOVER_MARGIN` (8 px). The pill's own `pointerenter/pointerleave` cannot be used: the pill moving re-runs the hit test, so peek → leave → park → enter again feeds itself, which is the endless in/out loop near the edge. Restricting `enter` to the visible band matters just as much: the old zone was the slid-out pill, so the ball popped out while the pointer was still tens of pixels from the edge — what the user reported as "it peeked before I got there". Parking needs the pointer fully outside `keep` plus 8 px, so wandering over the ball and 1 px of tremor flip nothing. A fresh snap or fold sets `hoverArmed` false — the pointer is resting inside the zone that was just created and would peek the ball straight back out — and it re-arms once the pointer has fully left and returned.
+- **Folding returns to the edge it came from**: clicking a docked pill records `place.dock` in `dockResume`, and `setPanelCollapsed(true)` (the ⌄ icon or a click elsewhere on the page) sees an empty `dock` with a pending `dockResume`, re-pins that side, reapplies placement and persists it — otherwise the pill drifts at wherever the undock left it and reads as "I opened it and lost the docking". A real drag clears `dockResume`: the user moved the pill, so there is no edge to go back to.
+- **Clicking elsewhere folds the card back**: a capture-phase `pointerdown` on `document` (page code cannot swallow it with `stopPropagation`) folds the open card into the pill. `event.composedPath()` decides what counts as "inside" — the panel and the toast each live in their own shadow host, so comparing `event.target` alone cannot see cross-shadow membership. Ignored during a drag and for non-primary buttons.
+- **Expand/fold keeps the origin**: the card is a popover of the pill and `applyCardAnchor()` computes its offset (right-aligned, opening above by default), so folding and unfolding only change size and sink depth — `place` never moves. The old model, where `place` meant "the top-left of whatever is visible" and `applyPlace()` converted anchors through the last placed size, was the source of every jump and is gone. Horizontally the card is clamped, never flipped; the vertical side is chosen when it opens (`cardBelow`) and frozen during a drag, so nothing teleports when the pointer crosses a threshold.
+- Position and docked side persist in `chrome.storage.local` under `panelPlace` (200 ms debounce, only `{ left, top, dock }`), surviving navigation and reload; `applyPlace()` mirrors the result into `panelHost` as `data-dock` / `data-left` / `data-top`, which is what the fixture test reads (together with the untransformed `offsetWidth/offsetHeight`, to prove the docked edge really is pinned to the client box and the pill really shrank to 40 px).
+- `panelHost` itself is `pointer-events: none` — only the card and the pill take input, so a pill sunk into an edge never blocks page clicks.
 
 ## 9. Ctrl bypass
 
@@ -789,6 +810,7 @@ message, `count: [0, 0]` requires none at all.
 | 12 | gzip-encoded zip attachment | one capture, but **no `7:` line** (`notMatch` compares whole line prefixes) |
 | 13 | POST download whose body exceeds the 96KB cap | nothing sent (no partial body, and the fallback must not re-fetch it as GET) |
 | 14 | link that reaches the zip through a 302 | exactly one capture, and the intermediate `/redirect-c14.zip` URL never appears |
+| 15 | full CDP mouse flow: check the collapsed pill, click it to expand, fold with ⌄, expand again, drag the card onto the right edge (it folds and docks itself), hover it out, leave, click it to undock and expand, drag the pill to the left edge, click it open, drag the card to the bottom edge, then sample the two peek rectangles point by point, reload, click the ball to expand, click inside the card, click elsewhere on the page, fold with ⌄ | all three states stay mutually exclusive at every step — collapsed is the pill alone (icon + badge, the icon's mid-line within 1.5 px of the pill's), expanded is the card alone with all four edges inside the **scrollbar-free client box** and the pill invisible, folding keeps `left`/`top` pixel-identical, and docked reports the right `dock`, a 40×40 `offsetWidth×offsetHeight` ball, no card left in the layout, exactly 30 px on screen with the whole icon inside it and centred; the hover decision follows **the pointer only** and peeks **only on the band the parked ball leaves on screen** — a point that only exists once slid out must stay parked, a point on the visible band must slide out, the dead band and 1 px tremor flip nothing and samples taken with the pointer held still must be constant (the old wiring on the element's own `pointerenter/leave` looped peek/park forever here); after reload the `dock`, the pinned bottom edge and the free `left` come back unchanged; clicking inside the card leaves it open; clicking elsewhere and clicking ⌄ both fold it into the pill **and re-park it on that same edge** (matching `dock`, bottom edge and `left`), and the ball reopens afterwards — while the whole interaction **sends nothing** |
 
 ```bash
 npm run test:fixtures -- --filter 视频      # only matching scenarios

@@ -10,7 +10,7 @@
 - **下载捕获**：直链下载、`Content-Disposition` 附件，以及 JavaScript 调起的浏览器下载。
 - **按住 Ctrl 跳过**：按住 **Ctrl**（macOS 为 **⌘ Command**）点击链接，本次下载交给浏览器，并显示简短提示。
 - **屏蔽站点**：在弹窗或页面右键菜单屏蔽当前站点，该主机及其子域名的下载全部绕过 NDM。
-- **页面媒体面板**：页面中的视频、音频集中到右下角浮层，点击条目即可发送到 NDM；默认最小化，不遮挡页面。
+- **页面媒体面板**：页面中的视频、音频集中到右下角浮层，点击条目即可发送到 NDM；默认折叠成胶囊，不遮挡页面，展开后点击网页其他地方会自动收回成胶囊；面板和胶囊都能自由拖动，靠近边缘松手就自动收起并把胶囊贴边藏成小圆球。
 - **不打扰浏览**：页面自己的 `fetch`/XHR、配置包、流媒体分片、广告与弹幕资源不会被自动下载；拿不准的下载留在浏览器。
 - **兼容 NDM 协议**：`ws://127.0.0.1:10007/download`，`neatextension.v1` 子协议。
 - **Chrome 原生风格**：明暗主题、系统字体、原生开关，弹窗与设置页保持紧凑。
@@ -63,7 +63,9 @@ JavaScript 通过 `chrome.downloads.onCreated` 触发的下载也会被接管。
 
 ### 页面媒体
 
-页面包含可直接下载的视频或音频时，右下角默认显示一个最小化的胶囊按钮；点击它展开面板，点击标题栏的最小化按钮（⌄）再次收起。弹窗中的「展开媒体面板」开关与该状态互锁：最小化后显示为关闭，打开即展开当前页面。也可在 **设置 → 捕获 → 页面媒体面板** 中彻底关闭该功能。
+页面包含可直接下载的视频或音频时，右下角默认显示一个最小化的胶囊（下载图标 + 数量徽标）；点击它展开面板，点击面板标题栏的收起图标（⌄）或网页其他地方，都会再次折回胶囊。弹窗中的「展开媒体面板」开关与该状态互锁：收起后显示为关闭，打开即展开当前页面。也可在 **设置 → 捕获 → 页面媒体面板** 中彻底关闭该功能。
+
+面板（抓标题栏）和胶囊都可以按住拖动，松手时只要贴近视口边缘，就自动收起并贴边：胶囊缩成一枚 40px 圆球沉进边缘，屏内只留 30px、正好装着完整的图标。鼠标移到那 30px 上，整颗滑回屏内（移到别处不会提前弹出），点它则脱离贴边并展开面板。展开面板后点击网页其他地方、或点面板里的收起图标，面板收回成胶囊并吸回原来那条边。三种状态互斥——贴边的只有圆球、展开的只有面板、折叠的只有胶囊。位置与贴边方向会记住（所有页面共用一份），刷新或换页后仍在原处。
 
 面板刻意保持保守：DRM/加密流、`blob:`、`data:` 以及仅通过 MSE 播放的流无法交给 NDM，因此不会列出。
 
@@ -134,7 +136,7 @@ A clean **Manifest V3** rewrite of the Neat Download Manager browser extension. 
 - **Download capture** — direct HTTP(S) downloads, `Content-Disposition` attachments, and JavaScript-triggered browser downloads.
 - **Ctrl to skip** — hold **Ctrl** (or **⌘ Command** on macOS) while clicking a link; that download stays in the browser, with a small toast confirming the bypass.
 - **Block sites** — block the current site from the popup or the page context menu; every download from that host and its subdomains bypasses NDM.
-- **Page media panel** — videos and audio found on the page are collected in a bottom-right panel; click an item to send it to NDM. Minimised by default so it never covers the page.
+- **Page media panel** — videos and audio found on the page are collected in a bottom-right panel; click an item to send it to NDM. Folded into a pill by default so it never covers the page, it folds back into that pill when you click anywhere else, and both the panel and the pill can be dragged anywhere — release one near an edge and the panel folds up while the pill docks there as a small ball.
 - **No browsing noise** — page `fetch`/XHR calls, config bundles, streaming segments, ads, and danmaku assets are never downloaded automatically; anything uncertain stays in the browser.
 - **NDM protocol compatible** — `ws://127.0.0.1:10007/download` with the `neatextension.v1` subprotocol.
 - **Chrome-native UI** — light/dark support, system fonts, native switches, and a compact popup/options page.
@@ -187,7 +189,9 @@ All downloads from that host and its subdomains then use the browser. Unblock fr
 
 ### Page media
 
-When a page contains direct video or audio, a minimised pill appears at the bottom-right by default; click it to expand the panel, and use the minimise button (⌄) in the header to collapse it again. The popup's **Expand media panel** switch is interlocked with that state — it shows off while minimised and expands the current page when turned on. Use **Settings → Capture → Page media panel** to disable the feature entirely.
+When a page contains direct video or audio, a collapsed pill appears at the bottom-right by default — a download icon plus a count badge. Click it to expand the panel, and use the collapse icon (⌄) in the panel header, or simply click anywhere else on the page, to fold it back into the pill. The popup's **Expand media panel** switch is interlocked with that state — it shows off while folded and expands the current page when turned on. Use **Settings → Capture → Page media panel** to disable the feature entirely.
+
+Drag the panel by its header, or drag the pill, and release either one near an edge: the panel folds up and the pill parks on that edge as a 40 px ball, sunk so only 30 px stay on screen — enough for the whole icon. Moving the pointer onto those 30 px slides the whole pill back out (nothing happens while it is still tens of pixels away); clicking it undocks and expands the panel, and clicking anywhere else on the page — or the panel's own collapse icon — folds it back into the ball on that same edge. The three states are mutually exclusive: docking is only ever the ball, expanding is only ever the panel, collapsed is only ever the pill. The position and the docked side are remembered (one shared setting for all pages), so it stays where you left it after a reload or on the next page.
 
 The panel is intentionally conservative: encrypted/DRM streams, `blob:` URLs, `data:` URLs, and MSE-only streams cannot be downloaded by NDM and are not listed.
 

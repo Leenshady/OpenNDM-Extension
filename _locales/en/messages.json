@@ -22,6 +22,7 @@
   "mediaPanelSubtitle": { "message": "Download with Neat Download Manager" },
   "close": { "message": "Close" },
   "mediaPanelOpen": { "message": "Expand media panel" },
+  "mediaPanelDrag": { "message": "Drag to move, release near an edge to hide" },
   "minimize": { "message": "Minimize" },
   "mediaFile": { "message": "Media file" },
   "downloadWithNdm": { "message": "Download with NDM" },
